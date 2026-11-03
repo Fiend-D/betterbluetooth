@@ -21,6 +21,8 @@ python -m betterbluetooth             # --mock 使用模拟数据，--minimized 
 
 ## 下载即用（无需安装 Python）
 
+从 [Releases](https://github.com/Fiend-D/betterbluetooth/releases/latest) 下载：
+
 | 文件 | 说明 |
 | --- | --- |
 | `BetterBluetooth-<版本>-windows-x64.exe` | Windows 10 1809+ / 11 单文件，双击运行 |
@@ -75,3 +77,7 @@ packaging/windows/package-wine.sh          # 在 Linux 上通过 Wine 构建 Win
 | --- | --- | --- |
 | Linux | `~/.config/betterbluetooth/settings.json` | `~/.local/share/betterbluetooth/history.db` |
 | Windows | `%APPDATA%\BetterBluetooth\settings.json` | `%LOCALAPPDATA%\BetterBluetooth\history.db` |
+
+## 许可证
+
+[MIT](LICENSE)

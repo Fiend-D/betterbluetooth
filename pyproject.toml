@@ -3,6 +3,7 @@ name = "betterbluetooth"
 version = "1.0.5"
 description = "Cross-platform Bluetooth device manager with per-device battery tray icons"
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = [
     "PySide6-Essentials>=6.6",
