@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Better Bluetooth
+Comment=蓝牙设备管理与电量显示
+Exec=betterbluetooth
+Icon=bluetooth
+Categories=Utility;Settings;HardwareSettings;
+StartupNotify=false
