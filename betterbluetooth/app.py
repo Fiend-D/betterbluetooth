@@ -238,6 +238,11 @@ class Controller(QObject):
     # ---- actions used by the UI ----
 
     def show_flyout(self, page: str = "devices", arg: str | None = None) -> None:
+        # Defer one tick so QMenu can finish closing before we resize/activate
+        # (otherwise Windows often auto-hides the flyout immediately).
+        QTimer.singleShot(0, lambda: self._show_flyout_now(page, arg))
+
+    def _show_flyout_now(self, page: str = "devices", arg: str | None = None) -> None:
         self.flyout.show_page(page, arg)
         self.flyout.popup()
 

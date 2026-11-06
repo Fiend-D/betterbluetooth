@@ -26,7 +26,7 @@ NATIVE_FRAME = IS_WINDOWS
 SHADOW = 0 if NATIVE_FRAME else 18
 WIDTH = 400
 HEIGHT = 600
-# 108-key realistic keyboard needs a wider canvas.
+# 108-key realistic keyboard needs a wider canvas (clamped to screen at runtime).
 INPUT_WIDTH = 980
 INPUT_HEIGHT = 620
 EDGE_GAP = 8
@@ -39,6 +39,7 @@ class Flyout(QWidget):
         self.ctl = ctl
         self.pinned = False
         self._hidden_at = 0.0
+        self._suppress_hide_until = 0.0
         self._user_moving = False
         self._last_user_move = 0.0
         self._manual_drag: QPoint | None = None
@@ -155,7 +156,12 @@ class Flyout(QWidget):
         elif name == "history":
             self.history_page.set_device(arg or self.history_page.address)
         elif name == "input":
-            self.input_page.set_device(arg)
+            try:
+                self.input_page.set_device(arg)
+            except Exception as e:  # noqa: BLE001
+                self.toast(f"无法打开按键映射：{e}", "error", 8000)
+                name = "devices"
+                page = self.devices_page
         self.stack.setCurrentWidget(page)
         self.footer.setVisible(name == "devices")
         self.add_btn.setVisible("scan" in self.ctl.capabilities)
@@ -163,13 +169,42 @@ class Flyout(QWidget):
         self.schedule_repaint()
 
     def _apply_page_size(self, wide: bool) -> None:
-        w = (INPUT_WIDTH if wide else WIDTH) + SHADOW * 2
-        h = (INPUT_HEIGHT if wide else HEIGHT) + SHADOW * 2
-        if self.width() == w and self.height() == h:
+        screen = QGuiApplication.screenAt(self.pos() + QPoint(20, 20)) \
+            or QGuiApplication.screenAt(QCursor.pos()) \
+            or QGuiApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen else QRect(0, 0, 1280, 800)
+        # Leave a margin so the expanded input page never exceeds the work area.
+        max_w = max(360, avail.width() - EDGE_GAP * 2)
+        max_h = max(400, avail.height() - EDGE_GAP * 2)
+        want_w = (INPUT_WIDTH if wide else WIDTH) + SHADOW * 2
+        want_h = (INPUT_HEIGHT if wide else HEIGHT) + SHADOW * 2
+        w = min(want_w, max_w)
+        h = min(want_h, max_h)
+        if self.width() != w or self.height() != h:
+            self.setFixedSize(w, h)
+            self.handle.move((self.panel.width() - self.handle.width()) // 2, 6)
+        self._clamp_on_screen()
+
+    def _clamp_on_screen(self) -> None:
+        """Keep the flyout fully (or mostly) inside the current screen."""
+        screen = QGuiApplication.screenAt(self.frameGeometry().center()) \
+            or QGuiApplication.screenAt(QCursor.pos()) \
+            or QGuiApplication.primaryScreen()
+        if screen is None:
             return
-        # Keep top-left stable when expanding so the panel doesn't jump off-screen.
-        self.setFixedSize(w, h)
-        self.handle.move((self.panel.width() - self.handle.width()) // 2, 6)
+        avail = screen.availableGeometry()
+        geo = self.frameGeometry()
+        x, y = geo.x(), geo.y()
+        if geo.right() > avail.right():
+            x = avail.right() - geo.width() + 1
+        if geo.bottom() > avail.bottom():
+            y = avail.bottom() - geo.height() + 1
+        if x < avail.left():
+            x = avail.left()
+        if y < avail.top():
+            y = avail.top()
+        if QPoint(x, y) != self.pos():
+            self.move(x, y)
 
     # ---- messages ----
 
@@ -208,7 +243,11 @@ class Flyout(QWidget):
 
     def popup(self) -> None:
         self._user_moving = False
+        # Avoid the QMenu-close ActivationChange race that auto-hides the flyout
+        # right after switching to a wider page (esp. Windows).
+        self._suppress_hide_until = time.monotonic() + 0.6
         self.move(self._anchor())
+        self._clamp_on_screen()
         self.show()
         if NATIVE_FRAME:
             _apply_dwm_frame(int(self.winId()))
@@ -260,6 +299,8 @@ class Flyout(QWidget):
 
     def _maybe_hide(self) -> None:
         if self.pinned or self.isActiveWindow():
+            return
+        if time.monotonic() < self._suppress_hide_until:
             return
         if QGuiApplication.mouseButtons() & Qt.LeftButton or time.monotonic() - self._last_user_move < 1.0:
             return

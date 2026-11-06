@@ -209,9 +209,10 @@ class DeviceCard(QFrame):
         if dev.is_bluetooth and "connect" in self.ctl.capabilities and not self.ctl.pending.get(self.address):
             menu.addAction("断开连接" if dev.connected else "连接", self._primary)
         menu.addAction("重命名", self.start_rename)
-        menu.addAction("电量历史", lambda: self.ctl.show_flyout("history", self.address))
+        addr = self.address
+        menu.addAction("电量历史", lambda checked=False, a=addr: self.ctl.show_flyout("history", a))
         if supports_input(dev):
-            menu.addAction("按键测试 / 映射", lambda: self.ctl.show_flyout("input", self.address))
+            menu.addAction("按键测试 / 映射", lambda checked=False, a=addr: self.ctl.show_flyout("input", a))
         tray = menu.addAction("在任务栏显示电量")
         tray.setCheckable(True)
         sid = self.device.stable_id if self.device else ""
