@@ -9,10 +9,11 @@ RUN rm -f /etc/apt/sources.list.d/* \
         libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 libxcb-xfixes0 libxkbcommon0 libxkbcommon-x11-0 \
         libegl1 libgl1 libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0 libwayland-client0 \
         libwayland-cursor0 libwayland-egl1 file wget ca-certificates desktop-file-utils \
+        build-essential linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \
-        "PySide6-Essentials==6.9.3" "dbus-fast>=2.0" "pyinstaller>=6.10" \
+        "PySide6-Essentials==6.9.3" "dbus-fast>=2.0" "evdev>=1.6" "pyinstaller>=6.10" \
     && wget -q -O /usr/local/bin/appimagetool \
         https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
     && chmod +x /usr/local/bin/appimagetool

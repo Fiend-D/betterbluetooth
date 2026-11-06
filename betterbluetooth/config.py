@@ -49,6 +49,7 @@ class Settings:
     autostart: bool = False
     tray_devices: dict[str, bool] = field(default_factory=dict)
     aliases: dict[str, str] = field(default_factory=dict)
+    input_remap_enabled: bool = False
 
     @classmethod
     def path(cls) -> Path:
@@ -68,5 +69,9 @@ class Settings:
         tmp.write_text(json.dumps(asdict(self), ensure_ascii=False, indent=2), "utf-8")
         tmp.replace(self.path())
 
-    def show_in_tray(self, address: str) -> bool:
-        return self.tray_devices.get(address, True)
+    def show_in_tray(self, address: str, stable_id: str = "") -> bool:
+        if stable_id and stable_id in self.tray_devices:
+            return self.tray_devices[stable_id]
+        if address in self.tray_devices:
+            return self.tray_devices[address]
+        return True

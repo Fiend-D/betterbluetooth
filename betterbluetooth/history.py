@@ -58,6 +58,44 @@ class BatteryHistory:
         self._db.commit()
         self._db.execute("VACUUM")
 
+    def query_keys(self, keys: list[str], since: int) -> list[tuple[int, int]]:
+        """Query history for any of the identity keys (stable_id + known MACs)."""
+        keys = [k for k in keys if k]
+        if not keys:
+            return []
+        if len(keys) == 1:
+            return self.query(keys[0], since)
+        placeholders = ",".join("?" * len(keys))
+        rows = self._db.execute(
+            f"SELECT ts, level FROM battery WHERE address IN ({placeholders}) AND ts>=? ORDER BY ts",
+            (*keys, since),
+        ).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
+    def rekey(self, from_keys: list[str], to_key: str) -> int:
+        """Move history rows from old address keys onto the stable identity key."""
+        if not to_key:
+            return 0
+        moved = 0
+        for key in from_keys:
+            if not key or key == to_key:
+                continue
+            cur = self._db.execute(
+                "UPDATE battery SET address=? WHERE address=?", (to_key, key)
+            )
+            moved += cur.rowcount or 0
+            self._last.pop(key, None)
+        if moved:
+            self._db.commit()
+        return moved
+
+    def clear_keys(self, keys: list[str]) -> None:
+        for key in keys:
+            if key:
+                self._db.execute("DELETE FROM battery WHERE address=?", (key,))
+                self._last.pop(key, None)
+        self._db.commit()
+
 
 def estimate_remaining_hours(points: list[tuple[int, int]]) -> float | None:
     """Estimate hours until empty from the most recent continuous discharge run."""

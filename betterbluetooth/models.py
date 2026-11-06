@@ -33,10 +33,12 @@ class Device:
     transport: str = "bluetooth"
     charging: bool | None = None
     extra: dict = field(default_factory=dict)
+    #: App-level stable identity (survives re-pair when MAC changes). Empty until resolved.
+    stable_id: str = ""
 
     @property
     def id(self) -> str:
-        return self.address
+        return self.stable_id or self.address
 
     @property
     def is_bluetooth(self) -> bool:

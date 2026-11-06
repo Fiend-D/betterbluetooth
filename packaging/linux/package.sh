@@ -14,6 +14,9 @@ APP=dist/linux/BetterBluetooth
 ICON=build/linux/icon.png
 
 "$APP/BetterBluetooth" --self-test
+# Packaged builds must ship platform input deps; never tell end users to pip-install.
+python -c "import os,sys; p='dist/linux/BetterBluetooth/_internal/evdev';
+sys.exit(0 if os.path.isdir(p) else 'evdev missing from bundle')"
 
 # Font stack must match the host's fontconfig configuration; every desktop ships it.
 rm -f "$APP"/_internal/libfontconfig.so* "$APP"/_internal/libfreetype.so*
@@ -42,7 +45,15 @@ HERE="$(dirname "$(readlink -f "$0")")"
 exec "$HERE/usr/lib/betterbluetooth/BetterBluetooth" "$@"
 EOF
 chmod +x "$APPDIR/AppRun"
-ARCH=x86_64 appimagetool --no-appstream "$APPDIR" "$OUT/${NAME}.AppImage"
+RUNTIME="${APPIMAGE_RUNTIME_FILE:-}"
+if [ -z "$RUNTIME" ] && [ -f /runtime-x86_64 ]; then
+    RUNTIME=/runtime-x86_64
+fi
+if [ -n "$RUNTIME" ]; then
+    ARCH=x86_64 appimagetool --no-appstream --runtime-file "$RUNTIME" "$APPDIR" "$OUT/${NAME}.AppImage"
+else
+    ARCH=x86_64 appimagetool --no-appstream "$APPDIR" "$OUT/${NAME}.AppImage"
+fi
 
 # ---- tar.gz ----
 STAGE=build/linux/$NAME
@@ -51,7 +62,9 @@ mkdir -p "$STAGE"
 cp -a "$APP" "$STAGE/BetterBluetooth"
 cp "$ICON" "$STAGE/betterbluetooth.png"
 cp packaging/linux/install.sh "$STAGE/install.sh"
-chmod +x "$STAGE/install.sh"
+cp packaging/linux/setup-input-remap.sh "$STAGE/setup-input-remap.sh"
+cp packaging/linux/99-betterbluetooth-uinput.rules "$STAGE/99-betterbluetooth-uinput.rules"
+chmod +x "$STAGE/install.sh" "$STAGE/setup-input-remap.sh"
 tar -C build/linux -czf "$OUT/${NAME}.tar.gz" "$NAME"
 
 ls -lh "$OUT"

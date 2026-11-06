@@ -79,13 +79,16 @@ def main() -> None:
         args += ["--collect-all", "winrt", "--hidden-import", "hid",
                  "--hidden-import", "betterbluetooth.backends.windows",
                  "--hidden-import", "betterbluetooth.peripherals.hidpp",
-                 "--hidden-import", "betterbluetooth.peripherals.switch"]
+                 "--hidden-import", "betterbluetooth.peripherals.switch",
+                 "--hidden-import", "betterbluetooth.inputmap.windows_hook"]
     else:
-        args += ["--collect-submodules", "dbus_fast",
+        args += ["--collect-submodules", "dbus_fast", "--collect-all", "evdev",
                  "--hidden-import", "betterbluetooth.backends.bluez",
-                 "--hidden-import", "betterbluetooth.peripherals.upower"]
+                 "--hidden-import", "betterbluetooth.peripherals.upower",
+                 "--hidden-import", "betterbluetooth.inputmap.linux_evdev"]
     args += ["--hidden-import", "betterbluetooth.backends.mock",
-             "--hidden-import", "betterbluetooth.peripherals.mock"]
+             "--hidden-import", "betterbluetooth.peripherals.mock",
+             "--hidden-import", "betterbluetooth.inputmap"]
     PyInstaller.__main__.run(args)
     print(f"\n输出：{DIST}")
 

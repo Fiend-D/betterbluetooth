@@ -49,7 +49,7 @@ class TrayManager(QObject):
         self._rebuild_main_menu(devices)
         wanted = {
             d.address: d for d in devices
-            if d.connected and d.battery is not None and s.show_in_tray(d.address)
+            if d.connected and d.battery is not None and s.show_in_tray(d.address, d.stable_id)
         }
         for address in list(self._device_icons):
             if address not in wanted:

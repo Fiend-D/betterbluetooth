@@ -12,6 +12,8 @@ from PySide6.QtWidgets import QApplication
 from . import APP_DISPLAY_NAME, APP_NAME, __version__, autostart
 from .config import IS_LINUX, Settings, data_dir
 from .history import BatteryHistory
+from .identity import IdentityStore
+from .inputmap import InputMapService
 from .models import AdapterState, Device
 from .ui import theme
 from .ui.flyout import Flyout
@@ -42,6 +44,7 @@ class Controller(QObject):
         super().__init__()
         self.app = app
         self.settings = Settings.load()
+        self.identities = IdentityStore.load()
         self.history = BatteryHistory(data_dir() / "history.db")
         self.history.prune(self.settings.history_days)
         self.theme = theme.ThemeManager(self.settings)
@@ -55,6 +58,8 @@ class Controller(QObject):
         self._prev_connected: dict[str, bool] = {}
 
         self.worker = BackendWorker(self.settings.refresh_interval, mock)
+        self.inputmap = InputMapService()
+        self.inputmap.store.master_enabled = self.settings.input_remap_enabled
         self.tray: TrayManager | None = None
         self.flyout = Flyout(self)
         self.tray = TrayManager(self)
@@ -71,6 +76,9 @@ class Controller(QObject):
         w.operationDone.connect(self._on_op_done)
         w.message.connect(lambda text: self._notify_user(text, "info"))
         self.flyout.settings_page.changed.connect(self._on_settings_changed)
+        self.inputmap.statusChanged.connect(lambda text: self.flyout.settings_page.sync_input_controls())
+        self.inputmap.start()
+        self.flyout.settings_page.sync_input_controls()
 
         if self.settings.autostart != autostart.is_enabled():
             self.settings.autostart = autostart.is_enabled()
@@ -94,7 +102,7 @@ class Controller(QObject):
     def _current_page(self) -> str:
         f = self.flyout
         return {f.devices_page: "devices", f.scan_page: "scan", f.history_page: "history",
-                f.settings_page: "settings"}.get(f.stack.currentWidget(), "devices")
+                f.input_page: "input", f.settings_page: "settings"}.get(f.stack.currentWidget(), "devices")
 
     def _on_failed(self, error: str) -> None:
         self.adapter = AdapterState()
@@ -108,22 +116,58 @@ class Controller(QObject):
 
     def _on_devices(self, devices: list[Device]) -> None:
         s = self.settings
+        present = {d.address for d in devices}
+        merged_names: list[str] = []
+        settings_dirty = False
         for d in devices:
-            alias = s.aliases.get(d.address)
+            stable_id, merged = self.identities.resolve(d, present)
+            d.stable_id = stable_id
+            keys = self.identities.all_keys(stable_id)
+            # Move legacy MAC-keyed history / remap / settings onto stable_id.
+            self.history.rekey(keys, stable_id)
+            self.inputmap.rekey_for_device(d, keys)
+            before_alias = dict(s.aliases)
+            before_tray = dict(s.tray_devices)
+            self._migrate_settings_keys(keys, stable_id)
+            if s.aliases != before_alias or s.tray_devices != before_tray:
+                settings_dirty = True
+            if merged:
+                merged_names.append(d.name or stable_id)
+            alias = s.aliases.get(stable_id) or s.aliases.get(d.address)
             if alias:
                 d.system_name = d.system_name or d.name
                 d.name = alias
+        self.identities.save()
+        if settings_dirty:
+            s.save()
         if s.history_enabled:
             for d in devices:
-                if d.connected and d.battery is not None:
-                    self.history.record(d.address, d.battery)
+                if d.connected and d.battery is not None and d.stable_id:
+                    self.history.record(d.stable_id, d.battery)
         self._notify_changes(devices)
         self.devices = devices
         self.flyout.devices_page.set_devices(devices)
+        self.inputmap.update_devices(devices)
         if self.flyout.stack.currentWidget() is self.flyout.history_page:
             self.flyout.history_page.reload()
         if self.tray:
             self.tray.update(devices)
+        if merged_names:
+            shown = "、".join(merged_names[:2])
+            more = f" 等 {len(merged_names)} 台" if len(merged_names) > 2 else ""
+            self._notify_user(f"已识别为同一设备（重新配对）：{shown}{more}，电量历史与改键已合并", "info")
+
+    def _migrate_settings_keys(self, keys: list[str], stable_id: str) -> None:
+        s = self.settings
+        for key in keys:
+            if not key or key == stable_id:
+                continue
+            if key in s.aliases and stable_id not in s.aliases:
+                s.aliases[stable_id] = s.aliases[key]
+            s.aliases.pop(key, None)
+            if key in s.tray_devices and stable_id not in s.tray_devices:
+                s.tray_devices[stable_id] = s.tray_devices[key]
+            s.tray_devices.pop(key, None)
 
     def _notify_changes(self, devices: list[Device]) -> None:
         s = self.settings
@@ -181,6 +225,7 @@ class Controller(QObject):
         self.worker.set_interval(s.refresh_interval)
         self.theme.apply()
         s.save()
+        self.inputmap.set_master(s.input_remap_enabled)
         if self.tray:
             self.tray.update(self.devices)
         self.flyout.devices_page.set_devices(self.devices)
@@ -219,15 +264,17 @@ class Controller(QObject):
         self._submit("pair", address, lambda b: b.pair(address))
 
     def remove_device(self, address: str) -> None:
-        self.settings.aliases.pop(address, None)
-        self.settings.tray_devices.pop(address, None)
-        self.settings.save()
+        # Keep stable identity + history/remap so a later re-pair can merge back.
+        self.identities.forget_address(address, drop_record=False)
+        self.identities.save()
         self._submit("remove", address, lambda b: b.remove(address))
 
     def rename_device(self, address: str, name: str) -> None:
+        key = self._settings_key(address)
         if name:
-            self.settings.aliases[address] = name
+            self.settings.aliases[key] = name
         else:
+            self.settings.aliases.pop(key, None)
             self.settings.aliases.pop(address, None)
         self.settings.save()
         if name and "rename" in self.capabilities:
@@ -236,11 +283,29 @@ class Controller(QObject):
             self.worker.refresh()
 
     def set_tray_visible(self, address: str, visible: bool) -> None:
-        self.settings.tray_devices[address] = visible
+        key = self._settings_key(address)
+        self.settings.tray_devices[key] = visible
         self.settings.save()
         if self.tray:
             self.tray.update(self.devices)
         self.flyout.devices_page.set_devices(self.devices)
+
+    def _settings_key(self, address: str) -> str:
+        dev = next((d for d in self.devices if d.address == address), None)
+        if dev and dev.stable_id:
+            return dev.stable_id
+        rec = self.identities.by_address(address)
+        return rec.stable_id if rec else address
+
+    def history_keys_for(self, address_or_id: str) -> list[str]:
+        dev = next((d for d in self.devices
+                    if d.address == address_or_id or d.stable_id == address_or_id), None)
+        if dev and dev.stable_id:
+            return self.identities.all_keys(dev.stable_id)
+        rec = self.identities.records.get(address_or_id) or self.identities.by_address(address_or_id)
+        if rec:
+            return self.identities.all_keys(rec.stable_id)
+        return [address_or_id]
 
     def set_powered(self, on: bool) -> None:
         self.worker.submit("power", "", lambda b: b.set_powered(on))
@@ -249,6 +314,7 @@ class Controller(QObject):
         self.flyout.hide()
         if self.tray:
             self.tray.hide_all()
+        self.inputmap.stop()
         self.worker.stop()
         self.settings.save()
         theme.cleanup()
@@ -274,11 +340,14 @@ def _self_test() -> int:
     import importlib
 
     modules = ["PySide6.QtSvg", "PySide6.QtNetwork", "betterbluetooth.backends.mock"]
+    modules += ["betterbluetooth.inputmap"]
     if sys.platform == "win32":
         modules += ["betterbluetooth.backends.windows", "betterbluetooth.backends.win_setupapi",
-                    "betterbluetooth.peripherals.hidpp", "betterbluetooth.peripherals.switch"]
+                    "betterbluetooth.peripherals.hidpp", "betterbluetooth.peripherals.switch",
+                    "betterbluetooth.inputmap.windows_hook"]
     else:
-        modules += ["betterbluetooth.backends.bluez", "betterbluetooth.peripherals.upower"]
+        modules += ["betterbluetooth.backends.bluez", "betterbluetooth.peripherals.upower",
+                    "betterbluetooth.inputmap.linux_evdev", "evdev"]
     failed = []
     for name in modules:
         try:

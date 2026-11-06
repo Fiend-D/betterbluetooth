@@ -1,6 +1,6 @@
 [project]
 name = "betterbluetooth"
-version = "1.0.5"
+version = "1.1.8"
 description = "Cross-platform Bluetooth device manager with per-device battery tray icons"
 readme = "README.md"
 license = { text = "MIT" }
@@ -8,6 +8,7 @@ requires-python = ">=3.10"
 dependencies = [
     "PySide6-Essentials>=6.6",
     "dbus-fast>=2.0; sys_platform == 'linux'",
+    "evdev>=1.6; sys_platform == 'linux'",
     "hidapi>=0.14; sys_platform == 'win32'",
     "winrt-runtime>=2.0; sys_platform == 'win32'",
     "winrt-Windows.Devices.Bluetooth>=2.0; sys_platform == 'win32'",

@@ -119,6 +119,10 @@ def _address_from_id(device_id: str) -> str | None:
     return normalize_address(found[-1]) if found else None
 
 
+def _address_to_ulong(address: str) -> int:
+    return int(address.replace(":", ""), 16)
+
+
 _PAIR_ERRORS = {
     DevicePairingResultStatus.AUTHENTICATION_FAILURE: "认证失败",
     DevicePairingResultStatus.AUTHENTICATION_TIMEOUT: "配对超时",
@@ -172,23 +176,42 @@ class WindowsBackend(Backend):
         except Exception:
             pass
 
-    async def _get_classic(self, device_id: str) -> BluetoothDevice | None:
-        dev = self._classic.get(device_id)
-        if dev is None:
-            dev = await BluetoothDevice.from_id_async(device_id)
+    async def _open_device(self, kind: str, device_id: str):
+        """Open a classic/LE device; skip stale or wrong-kind IDs instead of failing the refresh.
+
+        Dual-mode radios (e.g. Intel AX210) leave Association-Endpoint and orphaned entries
+        after adapter changes; FromIdAsync raises localized "设备ID无效" / "device ID is invalid".
+        """
+        cache = self._classic if kind == "classic" else self._le
+        cached = cache.get(device_id)
+        if cached is not None:
+            return cached
+        factory = BluetoothDevice if kind == "classic" else BluetoothLEDevice
+        for opener, arg in (
+            (factory.from_id_async, device_id),
+            (factory.from_bluetooth_address_async, None),
+        ):
+            try:
+                if opener is factory.from_bluetooth_address_async:
+                    address = _address_from_id(device_id)
+                    if not address:
+                        continue
+                    arg = _address_to_ulong(address)
+                dev = await opener(arg)
+            except OSError as e:
+                print(f"[windows] skip {kind} id={device_id!r}: {e}", file=sys.stderr)
+                continue
             if dev is not None:
-                self._classic[device_id] = dev
+                cache[device_id] = dev
                 self._watch(dev)
-        return dev
+                return dev
+        return None
+
+    async def _get_classic(self, device_id: str) -> BluetoothDevice | None:
+        return await self._open_device("classic", device_id)
 
     async def _get_le(self, device_id: str) -> BluetoothLEDevice | None:
-        dev = self._le.get(device_id)
-        if dev is None:
-            dev = await BluetoothLEDevice.from_id_async(device_id)
-            if dev is not None:
-                self._le[device_id] = dev
-                self._watch(dev)
-        return dev
+        return await self._open_device("le", device_id)
 
     async def _radio(self):
         adapter = await BluetoothAdapter.get_default_async()
@@ -227,31 +250,49 @@ class WindowsBackend(Backend):
             if cur.kind.value == "other":
                 cur.kind = dev.kind
 
-        for info in await _find_all(BluetoothDevice.get_device_selector_from_pairing_state(True)):
-            dev = await self._get_classic(info.id)
-            if dev is None:
-                continue
-            merge(Device(
-                address=normalize_address(dev.bluetooth_address),
-                name=dev.name or info.name,
-                kind=kind_from_class(dev.class_of_device.raw_value),
-                paired=True,
-                connected=dev.connection_status == BluetoothConnectionStatus.CONNECTED,
-            ), info)
+        try:
+            classic_infos = await _find_all(BluetoothDevice.get_device_selector_from_pairing_state(True))
+        except OSError as e:
+            print(f"[windows] classic enumeration failed: {e}", file=sys.stderr)
+            classic_infos = []
+        for info in classic_infos:
+            try:
+                dev = await self._get_classic(info.id)
+                if dev is None or not dev.bluetooth_address:
+                    continue
+                cod = getattr(getattr(dev, "class_of_device", None), "raw_value", None)
+                merge(Device(
+                    address=normalize_address(dev.bluetooth_address),
+                    name=(dev.name or info.name or "蓝牙设备").strip() or "蓝牙设备",
+                    kind=kind_from_class(cod),
+                    paired=True,
+                    connected=dev.connection_status == BluetoothConnectionStatus.CONNECTED,
+                ), info)
+            except Exception as e:  # noqa: BLE001 — skip broken/stale WinRT device nodes
+                print(f"[windows] skip classic {info.id!r}: {e}", file=sys.stderr)
 
-        for info in await _find_all(BluetoothLEDevice.get_device_selector_from_pairing_state(True)):
-            dev = await self._get_le(info.id)
-            if dev is None:
-                continue
-            address = normalize_address(dev.bluetooth_address)
-            le_objs[address] = dev
-            merge(Device(
-                address=address,
-                name=dev.name or info.name,
-                kind=kind_from_appearance(dev.appearance.raw_value),
-                paired=True,
-                connected=dev.connection_status == BluetoothConnectionStatus.CONNECTED,
-            ), info)
+        try:
+            le_infos = await _find_all(BluetoothLEDevice.get_device_selector_from_pairing_state(True))
+        except OSError as e:
+            print(f"[windows] LE enumeration failed: {e}", file=sys.stderr)
+            le_infos = []
+        for info in le_infos:
+            try:
+                dev = await self._get_le(info.id)
+                if dev is None or not dev.bluetooth_address:
+                    continue
+                address = normalize_address(dev.bluetooth_address)
+                le_objs[address] = dev
+                appearance = getattr(getattr(dev, "appearance", None), "raw_value", None)
+                merge(Device(
+                    address=address,
+                    name=(dev.name or info.name or "蓝牙设备").strip() or "蓝牙设备",
+                    kind=kind_from_appearance(appearance),
+                    paired=True,
+                    connected=dev.connection_status == BluetoothConnectionStatus.CONNECTED,
+                ), info)
+            except Exception as e:  # noqa: BLE001
+                print(f"[windows] skip LE {info.id!r}: {e}", file=sys.stderr)
 
         self._paired_infos = paired_infos
         loop = asyncio.get_running_loop()

@@ -38,5 +38,15 @@ StartupNotify=false
 EOF
 
 command -v update-desktop-database >/dev/null && update-desktop-database "$(dirname "$DESKTOP")" || true
+
+# Optional: system-wide key remapping needs /dev/uinput writable by group input.
+if [ -f "$HERE/setup-input-remap.sh" ]; then
+    cp -f "$HERE/setup-input-remap.sh" "$HERE/99-betterbluetooth-uinput.rules" "$TARGET/" 2>/dev/null || true
+    echo
+    echo "若要使用「系统级按键映射」，请再执行："
+    echo "  sudo bash $TARGET/setup-input-remap.sh"
+    echo "然后注销重新登录。"
+fi
+
 echo "已安装到 $TARGET"
 echo "可从应用菜单启动 Better Bluetooth，或运行：betterbluetooth"

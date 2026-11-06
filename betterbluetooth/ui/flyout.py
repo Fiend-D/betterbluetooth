@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 from .. import APP_DISPLAY_NAME
 from ..config import IS_WINDOWS
 from . import icons, theme
+from .input_page import InputPage
 from .pages import DevicesPage, HistoryPage, ScanPage, SettingsPage
 from .widgets import IconButton, InfoBar, button, retheme_tree
 
@@ -25,6 +26,9 @@ NATIVE_FRAME = IS_WINDOWS
 SHADOW = 0 if NATIVE_FRAME else 18
 WIDTH = 400
 HEIGHT = 600
+# 108-key realistic keyboard needs a wider canvas.
+INPUT_WIDTH = 980
+INPUT_HEIGHT = 620
 EDGE_GAP = 8
 DRAG_ZONE = 56
 
@@ -68,8 +72,9 @@ class Flyout(QWidget):
         self.devices_page = DevicesPage(ctl)
         self.scan_page = ScanPage(ctl)
         self.history_page = HistoryPage(ctl)
+        self.input_page = InputPage(ctl)
         self.settings_page = SettingsPage(ctl)
-        for page in (self.devices_page, self.scan_page, self.history_page, self.settings_page):
+        for page in (self.devices_page, self.scan_page, self.history_page, self.input_page, self.settings_page):
             self.stack.addWidget(page)
         lay.addWidget(self.stack, 1)
 
@@ -136,20 +141,35 @@ class Flyout(QWidget):
     def show_page(self, name: str = "devices", arg: str | None = None) -> None:
         if self.stack.currentWidget() is self.scan_page and name != "scan":
             self.scan_page.stop()
+        if self.stack.currentWidget() is self.input_page and name != "input":
+            self.input_page.set_device(None)
         page = {
             "devices": self.devices_page,
             "scan": self.scan_page,
             "history": self.history_page,
+            "input": self.input_page,
             "settings": self.settings_page,
         }[name]
         if name == "scan":
             self.scan_page.start()
         elif name == "history":
             self.history_page.set_device(arg or self.history_page.address)
+        elif name == "input":
+            self.input_page.set_device(arg)
         self.stack.setCurrentWidget(page)
         self.footer.setVisible(name == "devices")
         self.add_btn.setVisible("scan" in self.ctl.capabilities)
+        self._apply_page_size(name == "input")
         self.schedule_repaint()
+
+    def _apply_page_size(self, wide: bool) -> None:
+        w = (INPUT_WIDTH if wide else WIDTH) + SHADOW * 2
+        h = (INPUT_HEIGHT if wide else HEIGHT) + SHADOW * 2
+        if self.width() == w and self.height() == h:
+            return
+        # Keep top-left stable when expanding so the panel doesn't jump off-screen.
+        self.setFixedSize(w, h)
+        self.handle.move((self.panel.width() - self.handle.width()) // 2, 6)
 
     # ---- messages ----
 
@@ -253,6 +273,8 @@ class Flyout(QWidget):
         if self.stack.currentWidget() is self.scan_page:
             self.scan_page.stop()
             self.show_page("devices")
+        elif self.stack.currentWidget() is self.input_page:
+            self.input_page.set_device(None)
         super().hideEvent(e)
 
     # ---- dragging ----

@@ -11,6 +11,7 @@ Linux / Windows 双平台蓝牙设备管理工具。Fluent 风格弹出面板，
 - 连接、断开、搜索并配对新设备、删除设备、重命名
 - 电量历史曲线（24 小时 / 7 天 / 30 天）与续航估算
 - 低电量通知、连接状态通知、开机自启、浅色 / 深色 / 跟随系统主题
+- **按键测试 / 按设备映射**（键盘、手柄，含 Joy-Con）：系统全局生效，默认关闭
 
 ## 运行
 
@@ -71,12 +72,39 @@ packaging/windows/package-wine.sh          # 在 Linux 上通过 Wine 构建 Win
 - Windows 没有公开的“连接 / 断开已配对经典蓝牙设备”接口，因此该平台不提供连接 / 断开按钮。
 - 重命名仅在本程序内生效。
 
+## 按键测试与系统级映射
+
+在设备卡片菜单中打开「按键测试 / 映射」（键盘 / 手柄）。设置页有总开关「系统级按键映射」。
+
+| 能力 | Linux | Windows |
+| --- | --- | --- |
+| 按键测试 | 读取系统输入设备（依赖已打进安装包） | Raw Input（已打包） |
+| 键盘映射 | 独占原设备后发出映射键（真全局） | 低级键盘钩子（多数应用生效） |
+| Joy-Con | 可选保活（全速报告）+ 按钮映射到键盘 | 同左 |
+
+安装包已包含全部运行依赖，**不需要**再 `pip install`。  
+
+**权限（Linux）：** 需要能读写 `/dev/input/event*`。把用户加入 `input` 组后重新登录：
+
+```bash
+sudo usermod -aG input "$USER"
+```
+
+**注意：**
+
+- 映射默认关闭，需在设置中打开总开关，并在设备页对该设备启用。
+- 与 PowerToys Keyboard Manager、keyd、SharpKeys、Steam Input 等同时启用可能冲突，建议只开一套。
+- Windows 用户态钩子无法覆盖所有独占 Raw Input 的游戏 / 反作弊场景；这些环境需要后续的驱动级方案。
+- Joy-Con 保活会占用 HID，可能与 Steam / BetterJoy 抢设备，请勿同时开启。
+
+配置文件：`input_profiles.json`（与 `settings.json` 同目录）。
+
 ## 数据位置
 
-| 平台 | 设置 | 电量历史 |
-| --- | --- | --- |
-| Linux | `~/.config/betterbluetooth/settings.json` | `~/.local/share/betterbluetooth/history.db` |
-| Windows | `%APPDATA%\BetterBluetooth\settings.json` | `%LOCALAPPDATA%\BetterBluetooth\history.db` |
+| 平台 | 设置 | 电量历史 | 输入映射 |
+| --- | --- | --- | --- |
+| Linux | `~/.config/betterbluetooth/settings.json` | `~/.local/share/betterbluetooth/history.db` | `~/.config/betterbluetooth/input_profiles.json` |
+| Windows | `%APPDATA%\BetterBluetooth\settings.json` | `%LOCALAPPDATA%\BetterBluetooth\history.db` | `%APPDATA%\BetterBluetooth\input_profiles.json` |
 
 ## 许可证
 

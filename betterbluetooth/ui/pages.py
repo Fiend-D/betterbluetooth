@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 
 from .. import APP_DISPLAY_NAME, __version__
 from ..history import estimate_remaining_hours
+from ..inputmap import supports_input
 from ..models import AdapterState, Device
 from . import icons
 from .chart import BatteryChart
@@ -175,7 +176,7 @@ class DeviceCard(QFrame):
         self.bar.set_level(dev.battery, s.low_battery_threshold)
 
         self.tray_btn.setVisible(has_battery)
-        shown = s.show_in_tray(dev.address)
+        shown = s.show_in_tray(dev.address, getattr(dev, "stable_id", "") or "")
         self.tray_btn.setChecked(shown)
         self.tray_btn.setToolTip("已在任务栏显示电量（点击隐藏）" if shown else "在任务栏显示电量")
 
@@ -209,9 +210,12 @@ class DeviceCard(QFrame):
             menu.addAction("断开连接" if dev.connected else "连接", self._primary)
         menu.addAction("重命名", self.start_rename)
         menu.addAction("电量历史", lambda: self.ctl.show_flyout("history", self.address))
+        if supports_input(dev):
+            menu.addAction("按键测试 / 映射", lambda: self.ctl.show_flyout("input", self.address))
         tray = menu.addAction("在任务栏显示电量")
         tray.setCheckable(True)
-        tray.setChecked(self.ctl.settings.show_in_tray(self.address))
+        sid = self.device.stable_id if self.device else ""
+        tray.setChecked(self.ctl.settings.show_in_tray(self.address, sid))
         tray.toggled.connect(lambda on: self.ctl.set_tray_visible(self.address, on))
         if dev.is_bluetooth and "remove" in self.ctl.capabilities:
             menu.addSeparator()
@@ -350,7 +354,7 @@ class DevicesPage(QWidget):
                 self._cards.pop(address).deleteLater()
 
         def key(d: Device) -> str:
-            return d.name.lower()
+            return (d.name or "").lower()
 
         bluetooth = [d for d in devices if d.is_bluetooth]
         connected = sorted((d for d in bluetooth if d.connected), key=key)
@@ -574,12 +578,16 @@ class HistoryPage(QWidget):
         return value
 
     def set_device(self, address: str | None) -> None:
-        devices = sorted(self.ctl.devices, key=lambda d: (not d.connected, d.name.lower()))
+        devices = sorted(self.ctl.devices, key=lambda d: (not d.connected, (d.name or "").lower()))
         self.combo.blockSignals(True)
         self.combo.clear()
         for d in devices:
-            self.combo.addItem(d.name, d.address)
-        idx = self.combo.findData(address) if address else 0
+            self.combo.addItem(d.name, d.stable_id or d.address)
+        want = None
+        if address:
+            want = next((d.stable_id or d.address for d in devices
+                         if d.address == address or d.stable_id == address), address)
+        idx = self.combo.findData(want) if want else 0
         self.combo.setCurrentIndex(max(0, idx))
         self.combo.blockSignals(False)
         self.address = self.combo.currentData()
@@ -592,9 +600,11 @@ class HistoryPage(QWidget):
     def reload(self) -> None:
         span = self.RANGES[max(0, self.range.current())][0]
         now = int(time.time())
-        points = self.ctl.history.query(self.address, now - span) if self.address else []
+        keys = self.ctl.history_keys_for(self.address) if self.address else []
+        points = self.ctl.history.query_keys(keys, now - span) if keys else []
         self.chart.set_data(points, now - span, now)
-        dev = next((d for d in self.ctl.devices if d.address == self.address), None)
+        dev = next((d for d in self.ctl.devices
+                    if d.stable_id == self.address or d.address == self.address), None)
         current = dev.battery if dev and dev.connected else None
         self.stat_now.setText(f"{current}%" if current is not None else "—")
         self.stat_min.setText(f"{min(l for _, l in points)}%" if points else "—")
@@ -609,8 +619,13 @@ class HistoryPage(QWidget):
     def _clear(self) -> None:
         if self.address:
             name = self.combo.currentText()
-            self.ctl.flyout.confirm(f"清除“{name}”的全部电量记录？", "清除",
-                                    lambda: (self.ctl.history.clear(self.address), self.reload()))
+            keys = self.ctl.history_keys_for(self.address)
+
+            def _do():
+                self.ctl.history.clear_keys(keys)
+                self.reload()
+
+            self.ctl.flyout.confirm(f"清除“{name}”的全部电量记录？", "清除", _do)
 
 
 class TrayStylePicker(QWidget):
@@ -714,9 +729,16 @@ class SettingsPage(QWidget):
 
         self.interval = self._spin(5, 600, s.refresh_interval, " 秒")
         self.autostart = self._switch(s.autostart)
+        self.input_remap = self._switch(s.input_remap_enabled)
+        self.input_status = label("", "secondary", wrap=True)
         self._group(lay, "常规", [
             ("刷新间隔", "设备状态变化会实时更新，此项为轮询兜底", self.interval),
             ("开机自动启动", "", self.autostart),
+        ])
+        self._group(lay, "输入映射", [
+            ("系统级按键映射", "按设备改键；默认关闭。与 PowerToys / keyd / Steam Input 同时启用可能冲突",
+             self.input_remap),
+            ("", "", self.input_status),
         ])
 
         self.history_switch = self._switch(s.history_enabled)
@@ -739,11 +761,20 @@ class SettingsPage(QWidget):
         root.addWidget(_scroll(content), 1)
 
         self.tray_picker.changed.connect(self._save)
-        for w in (self.low_switch, self.conn_switch, self.autostart, self.history_switch, self.colored_switch):
+        for w in (self.low_switch, self.conn_switch, self.autostart, self.history_switch,
+                  self.colored_switch, self.input_remap):
             w.toggled.connect(self._save)
         for w in (self.threshold, self.interval, self.history_days):
             w.valueChanged.connect(self._save)
         self.theme_combo.currentIndexChanged.connect(self._save)
+        self.sync_input_controls()
+
+    def sync_input_controls(self) -> None:
+        s = self.ctl.settings
+        self.input_remap.set_checked_silent(s.input_remap_enabled)
+        cap = getattr(self.ctl, "inputmap", None)
+        if cap is not None:
+            self.input_status.setText(cap.capability.get("message", ""))
 
     def set_backend_info(self, text: str) -> None:
         self.about.setText(text)
@@ -811,6 +842,7 @@ class SettingsPage(QWidget):
         s.history_enabled = self.history_switch.isChecked()
         s.history_days = self.history_days.value()
         s.autostart = self.autostart.isChecked()
+        s.input_remap_enabled = self.input_remap.isChecked()
         self.tray_picker.retheme()
         self.changed.emit()
 
