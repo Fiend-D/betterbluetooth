@@ -26,23 +26,34 @@ UNUSED_QT = [
 
 
 def render_icon() -> Path:
-    from PySide6.QtCore import QByteArray, QRectF, Qt
-    from PySide6.QtGui import QGuiApplication, QImage, QPainter
-    from PySide6.QtSvg import QSvgRenderer
-
-    sys.path.insert(0, str(ROOT))
-    from betterbluetooth.ui.icons import APP_ICON_SVG
-
-    _app = QGuiApplication.instance() or QGuiApplication(["build", "-platform", "offscreen"])
     BUILD.mkdir(parents=True, exist_ok=True)
-    img = QImage(256, 256, QImage.Format_ARGB32)
-    img.fill(Qt.transparent)
-    painter = QPainter(img)
-    painter.setRenderHint(QPainter.Antialiasing)
-    QSvgRenderer(QByteArray(APP_ICON_SVG)).render(painter, QRectF(0, 0, 256, 256))
-    painter.end()
     png = BUILD / "icon.png"
-    img.save(str(png))
+    try:
+        from PySide6.QtCore import QByteArray, QRectF, Qt
+        from PySide6.QtGui import QGuiApplication, QImage, QPainter
+        from PySide6.QtSvg import QSvgRenderer
+
+        sys.path.insert(0, str(ROOT))
+        from betterbluetooth.ui.icons import APP_ICON_SVG
+
+        _app = QGuiApplication.instance() or QGuiApplication(["build", "-platform", "offscreen"])
+        img = QImage(256, 256, QImage.Format_ARGB32)
+        img.fill(Qt.transparent)
+        painter = QPainter(img)
+        painter.setRenderHint(QPainter.Antialiasing)
+        QSvgRenderer(QByteArray(APP_ICON_SVG)).render(painter, QRectF(0, 0, 256, 256))
+        painter.end()
+        img.save(str(png))
+    except Exception:
+        # CI / headless hosts may lack libEGL; fall back to a solid PNG via Pillow.
+        from PIL import Image, ImageDraw
+
+        img = Image.new("RGBA", (256, 256), (0, 120, 212, 255))
+        draw = ImageDraw.Draw(img)
+        draw.ellipse((48, 48, 208, 208), fill=(255, 255, 255, 230))
+        draw.ellipse((88, 88, 168, 168), fill=(0, 120, 212, 255))
+        img.save(png)
+
     if PLATFORM == "windows":
         from PIL import Image
         ico = BUILD / "icon.ico"
@@ -90,7 +101,8 @@ def main() -> None:
              "--hidden-import", "betterbluetooth.peripherals.mock",
              "--hidden-import", "betterbluetooth.inputmap"]
     PyInstaller.__main__.run(args)
-    print(f"\n输出：{DIST}")
+    # Avoid UnicodeEncodeError on Windows cp1252 consoles / CI logs.
+    print(f"\nOutput: {DIST}")
 
 
 if __name__ == "__main__":
