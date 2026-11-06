@@ -192,11 +192,25 @@ class WindowsHookBackend(InputBackend):
         with self._lock:
             self._profiles = {p.device_key: p for p in profiles}
             self._master = master_enabled
+        self._refresh_handle_map()
 
     def set_test_target(self, device_key: str | None) -> None:
         with self._lock:
             self._test_target = device_key
         self._refresh_handle_map()
+
+    def _keyboard_remap_profiles(self) -> list[InputProfile]:
+        with self._lock:
+            if not self._master:
+                return []
+            return [
+                p for p in self._profiles.values()
+                if p.enabled and p.kind == "keyboard" and p.rules
+            ]
+
+    def _sole_keyboard_remap(self) -> InputProfile | None:
+        profiles = self._keyboard_remap_profiles()
+        return profiles[0] if len(profiles) == 1 else None
 
     def _refresh_handle_map(self) -> None:
         count = wintypes.UINT(0)
@@ -214,6 +228,8 @@ class WindowsHookBackend(InputBackend):
         with self._lock:
             devices = list(self._devices)
             test = self._test_target
+        sole = self._sole_keyboard_remap()
+        sole_key = sole.device_key if sole is not None else None
         mapping: dict[int, str] = {}
         for entry in arr:
             if entry.dwType != RIM_TYPEKEYBOARD:
@@ -234,10 +250,12 @@ class WindowsHookBackend(InputBackend):
                 if dname and (dname in name or name in dname):
                     matched = key
                     break
+            # Raw Input path names rarely contain the Bluetooth alias; fall back so
+            # remapping / testing still attach to a profile.
             if matched is None and test:
-                # During testing, accept unmatched keyboard handles so the selected
-                # Bluetooth keyboard still lights up when Raw Input names don't match.
                 matched = test
+            if matched is None and sole_key:
+                matched = sole_key
             if matched is not None:
                 mapping[int(entry.hDevice)] = matched
         with self._lock:
@@ -253,6 +271,18 @@ class WindowsHookBackend(InputBackend):
             if p and p.enabled and p.kind == "keyboard" and p.rules:
                 return p
         return None
+
+    def remap_runtime_status(self) -> str:
+        profiles = self._keyboard_remap_profiles()
+        if not profiles:
+            if not self._master:
+                return "总开关未开启（设置 → 系统级按键映射）"
+            return "已开启总开关，但没有已启用的键盘映射规则"
+        if self._hook is None:
+            return "键盘钩子未安装（可尝试以管理员身份运行）"
+        if len(profiles) == 1:
+            return f"系统改键生效中：{profiles[0].name or profiles[0].device_key}（Windows 对全局键盘钩子生效）"
+        return f"系统改键已启用 {len(profiles)} 套方案（多键盘时依赖设备识别，可能不稳定）"
 
     def _thread_main(self) -> None:
         self._thread_id = kernel32.GetCurrentThreadId()
@@ -330,12 +360,15 @@ class WindowsHookBackend(InputBackend):
             vk = int(info.vkCode)
             down = wparam in (WM_KEYDOWN, WM_SYSKEYDOWN)
             up = wparam in (WM_KEYUP, WM_SYSKEYUP)
+            if not (down or up):
+                return user32.CallNextHookEx(self._hook, ncode, wparam, lparam)
+
             last = self._last_raw
             with self._lock:
                 test = self._test_target
-            # Fallback test path: if Raw Input did not identify the device, still
-            # light keys from the low-level hook while a test target is active.
-            if test and (down or up):
+
+            # UI test feedback (LL hook usually arrives before Raw Input).
+            if test:
                 recent_raw = (
                     last.get("key") == test
                     and last.get("vk") == vk
@@ -345,24 +378,40 @@ class WindowsHookBackend(InputBackend):
                     code = VK_TO_KEY.get(vk)
                     if code:
                         self._emit(InputEvent(test, code, down, code_label(code)))
-            # Correlate with recent Raw Input from a known remapped device.
-            if last.get("key") and last.get("vk") == vk and time.monotonic() - last["t"] < 0.08:
-                profile = self._match_profile(last["key"])
-                if profile is not None:
-                    code = VK_TO_KEY.get(vk)
-                    if code and code in profile.rule_map():
-                        targets = profile.rule_map()[code]
-                        if down or up:
-                            for to in targets:
-                                tvk = KEY_TO_VK.get(to)
-                                if tvk is not None:
-                                    self._send_vk(tvk, down)
-                        return 1  # swallow original (including suppress when targets empty)
+
+            # Resolve which remap profile applies. LL hooks run BEFORE WM_INPUT is
+            # dispatched, so Raw Input correlation often misses — fall back to the
+            # sole enabled keyboard profile (common single-BT-keyboard case).
+            profile = None
+            recent = (
+                last.get("key")
+                and last.get("vk") == vk
+                and time.monotonic() - float(last.get("t") or 0) < 0.08
+            )
+            if recent:
+                profile = self._match_profile(last.get("key"))
+            if profile is None:
+                profile = self._sole_keyboard_remap()
+
+            if profile is not None:
+                code = VK_TO_KEY.get(vk)
+                rules = profile.rule_map()
+                if code and code in rules:
+                    targets = rules[code]
+                    for to in targets:
+                        tvk = KEY_TO_VK.get(to)
+                        if tvk is not None:
+                            self._send_vk(tvk, down)
+                    return 1  # swallow original (also when targets empty = disable)
         return user32.CallNextHookEx(self._hook, ncode, wparam, lparam)
 
     @staticmethod
     def _send_vk(vk: int, down: bool) -> None:
         inp = INPUT()
         inp.type = 1  # INPUT_KEYBOARD
-        inp.union.ki = KEYBDINPUT(vk, 0, 0 if down else 2, 0, None)  # KEYEVENTF_KEYUP=2
+        flags = 0 if down else 2  # KEYEVENTF_KEYUP
+        # Mark extended keys so arrows / Ins / Del etc. inject correctly.
+        if vk in {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E, 0x5B, 0x5C}:
+            flags |= 1  # KEYEVENTF_EXTENDEDKEY
+        inp.union.ki = KEYBDINPUT(vk, 0, flags, 0, None)
         user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
