@@ -110,12 +110,15 @@ class InputMapService(QObject):
                 remap_rules = profile.rule_map()
                 remap_on = True
         else:
-            # No test page open: still remap the sole enabled gamepad profile.
+            # No test page open: remap the enabled gamepad profile, preferring
+            # the one whose device is connected (X and D mode are separate devices).
             enabled = [
                 p for p in self.store.profiles.values()
                 if p.enabled and self.store.master_enabled and p.kind == "gamepad" and p.rules
             ]
-            if len(enabled) == 1:
+            live = [p for p in enabled if p.device_key in pad_names]
+            if len(live) == 1 or (not live and len(enabled) == 1):
+                enabled = live or enabled
                 remap_key = enabled[0].device_key
                 remap_rules = enabled[0].rule_map()
                 remap_on = True

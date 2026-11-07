@@ -79,6 +79,8 @@ _HAT_DIRS = {
     5: ("BTN_DPAD_DOWN",), 6: ("BTN_DPAD_DOWN", "BTN_DPAD_LEFT"),
     7: ("BTN_DPAD_LEFT",), 8: ("BTN_DPAD_UP", "BTN_DPAD_LEFT"),
 }
+# Microsoft / Sony / Nintendo pads are read via XInput or their own HID path.
+_OTHER_PATH_VIDS = frozenset({0x045E, 0x054C, 0x057E})
 _HAT_MASK = {1: 1, 2: 1 | 2, 3: 2, 4: 4 | 2, 5: 4, 6: 4 | 8, 7: 8, 8: 1 | 8}  # SDL h0.N bits
 
 
@@ -229,11 +231,11 @@ class WinGamepadPoller:
                 # D-mode GamepadSpace is HID-only; don't let a leftover X-mode
                 # Xbox slot steal the highlight while testing the D-mode device.
                 if "gamepadspace" in want.lower():
-                    self._poll_raw(target, want, remap_on, rules)
+                    self._poll_raw(target, want, remap_on, rules, names)
                 else:
                     seen = self._poll_xinput(target, remap_on, rules)
                     if not seen:
-                        self._poll_raw(target, want, remap_on, rules)
+                        self._poll_raw(target, want, remap_on, rules, names)
             self._stop.wait(0.016)
 
     def _emit(self, key: str, code: str, pressed: bool, remap_on: bool, rules: dict) -> None:
@@ -277,7 +279,8 @@ class WinGamepadPoller:
             self._prev[slot] = pressed
         return any_slot
 
-    def _poll_raw(self, test: str, want_name: str, remap_on: bool, rules: dict) -> None:
+    def _poll_raw(self, test: str, want_name: str, remap_on: bool, rules: dict,
+                  other_names: dict[str, str] | None = None) -> None:
         """D-mode / HID pads (GamepadSpace-*) show up here, not on XInput."""
         if sys.platform != "win32":
             return
@@ -291,6 +294,8 @@ class WinGamepadPoller:
         except Exception:
             return
         want = (want_name or "").lower().strip()
+        others = [n.lower() for k, n in (other_names or {}).items() if k != test and n]
+        listed = []
         for i, pad in enumerate(pads):
             try:
                 name = getattr(pad, "display_name", None) or ""
@@ -299,15 +304,22 @@ class WinGamepadPoller:
                 name = str(name or "")
             except Exception:
                 name = ""
+            try:
+                pad_vid = int(pad.hardware_vendor_id)
+            except Exception:
+                pad_vid = 0
+            listed.append((i, pad, name, pad_vid))
+        if want:
+            strict = [p for p in listed if self._raw_matches(want, p[2].lower(), p[3], others, len(pads), loose=False)]
+            matched = strict or [p for p in listed if self._raw_matches(want, p[2].lower(), p[3], others, len(pads))]
+            if not matched and f"nomatch:{want}" not in self._read_errors:
+                self._read_errors.add(f"nomatch:{want}")
+                from ..debuglog import log
+                log("pad", f"no raw controller for {want_name!r}; seen "
+                    + ", ".join(f"{n!r} vid={v:04x}" for _, _, n, v in listed))
+            listed = matched
+        for i, pad, name, _vid in listed:
             name_l = name.lower()
-            if want and want not in name_l and name_l not in want:
-                # Allow GamepadSpace when the BT alias is GamepadSpace-Q34U.
-                if not (
-                    "gamepadspace" in want and "gamepadspace" in name_l
-                    or "xbox" in want and "xbox" in name_l
-                ):
-                    if len(pads) != 1:
-                        continue
             slot = f"raw:{i}:{name_l[:24]}"
             try:
                 n_btn = int(pad.button_count)
@@ -394,6 +406,30 @@ class WinGamepadPoller:
                         self._prev_sticks[slot] = sticks
                 except Exception:
                     pass
+
+    @staticmethod
+    def _raw_matches(want: str, name_l: str, vid: int, others: list[str], n_pads: int,
+                     loose: bool = True) -> bool:
+        """Is this RawGameController the Bluetooth device named `want`?
+
+        D-mode HID pads are listed as "HID-compliant game controller" (or a
+        localized equivalent), never by their Bluetooth name, so in the loose
+        pass a generic name is accepted unless it belongs to a brand handled
+        elsewhere or another connected pad claims it by name.
+        """
+        if name_l and (want in name_l or name_l in want):
+            return True
+        if "xbox" in want and "xbox" in name_l:
+            return True
+        if not loose:
+            return False
+        if n_pads == 1:
+            return True
+        if vid in _OTHER_PATH_VIDS and "xbox" not in want:
+            return False
+        if any(o and (o in name_l or name_l in o) for o in others if name_l):
+            return False
+        return "xbox" not in want
 
     @staticmethod
     def _button_code(label: str, index: int, mapping: _PadMapping | None) -> str:
