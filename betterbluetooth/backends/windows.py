@@ -308,14 +308,25 @@ class WindowsBackend(Backend):
         self._paired_infos = paired_infos
         loop = asyncio.get_running_loop()
         try:
-            levels = await loop.run_in_executor(None, win_setupapi.read_batteries)
+            levels, by_name = await loop.run_in_executor(None, win_setupapi.read_batteries_detailed)
         except Exception:
-            levels = {}
+            levels, by_name = {}, {}
         for address, dev in merged.items():
             if not dev.connected:
                 continue
-            dev.battery = levels.get(address)
+            level = levels.get(address)
+            if level is None and (dev.name or "").lower() in by_name:
+                level = by_name[dev.name.lower()]
+            if level is None:
+                # Fuzzy name match (Windows may append "Audio" / "LE" suffixes).
+                low = (dev.name or "").lower()
+                for n, v in by_name.items():
+                    if low and (low in n or n in low):
+                        level = v
+                        break
+            dev.battery = level
             if dev.battery is None and address in le_objs:
+                # GATT Battery Service — BLE pads / headsets / mice.
                 dev.battery = await self._gatt_battery(address, le_objs[address])
         return list(merged.values())
 

@@ -109,7 +109,13 @@ def merge(bluetooth: list[Device], peripherals: list[Device]) -> list[Device]:
                      or "controller" in (d.name or "").lower()
                      or "xbox" in (d.name or "").lower()
                      or "dual" in (d.name or "").lower()
-                     or "joy" in (d.name or "").lower())
+                     or "joy" in (d.name or "").lower()
+                     or "gamesir" in (d.name or "").lower()
+                     or "8bit" in (d.name or "").lower()
+                     or "flydigi" in (d.name or "").lower()
+                     or "盖世" in (d.name or "")
+                     or "飞智" in (d.name or "")
+                     or "北通" in (d.name or ""))
             ]
             if len(fuzzy) == 1:
                 bt = fuzzy[0]

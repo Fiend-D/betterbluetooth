@@ -122,7 +122,10 @@ def kind_from_name(name: str | None) -> DeviceKind | None:
         return None
     if any(tok in text for tok in (
         "xbox", "dualsense", "dualshock", "joy-con", "joycon", "pro controller",
-        "gamepad", "wireless controller", "switch pro", "8bitdo",
+        "gamepad", "wireless controller", "switch pro", "8bitdo", "八位堂",
+        "gamesir", "盖世小鸡", "flydigi", "飞智", "betop", "北通",
+        "gulikit", "谷粒", "pxn", "莱仕达", "iine", "良值", "mocute", "魔卡特",
+        "vader", "apex", "tarantula", "cyclone",
     )):
         return DeviceKind.GAMEPAD
     if any(tok in text for tok in ("keyboard", "keychron", "mx keys", "magic keyboard")):
