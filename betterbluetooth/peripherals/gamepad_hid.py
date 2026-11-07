@@ -258,6 +258,38 @@ def _read_gamesir_battery(dev: hid.device) -> tuple[int, bool] | None:
     return None
 
 
+def _read_shanwan_battery(dev: hid.device) -> tuple[int, bool] | None:
+    """Probe ShanWan / GamepadSpace HID reports; protocol on PC is undocumented.
+
+    Logs a short hex dump so we can reverse a real battery byte later. Does not
+    guess percentages (avoids another fake reading).
+    """
+    try:
+        from ..debuglog import log
+        for report_id in (0x05, 0x06, 0x04, 0x01, 0xA1, 0xF1):
+            got = None
+            try:
+                got = dev.get_feature_report(report_id, 64)
+            except Exception:
+                try:
+                    got = dev.get_input_report(report_id, 64)
+                except Exception:
+                    got = None
+            if got and len(got) > 1:
+                log("hid", f"shanwan report id=0x{report_id:02x} n={len(got)} "
+                    f"hex={bytes(got[:16]).hex()}")
+        data = dev.read(64, 40)
+        if data:
+            log("hid", f"shanwan input n={len(data)} hex={bytes(data[:16]).hex()}")
+    except OSError as e:
+        try:
+            from ..debuglog import log
+            log("hid", f"shanwan probe failed: {e}")
+        except Exception:
+            pass
+    return None
+
+
 def _read_flydigi_battery(dev: hid.device, vid: int) -> tuple[int, bool] | None:
     """Flydigi V2 status cmd 0x10 → byte 11 (SDL_hidapi_flydigi)."""
     try:
@@ -519,7 +551,15 @@ def scan_gamepads(state: dict) -> list[Device]:
             continue
         family = None
         name = entry.get("product_string") or ""
-        if vid == NINTENDO and pid in NINTENDO_PRODUCTS:
+        name_l = name.lower()
+        mfg = (entry.get("manufacturer_string") or "").lower()
+        # D-mode ShanWan advertises GamepadSpace-* on arbitrary VIDs — catch by name first.
+        if any(t in name_l or t in mfg for t in (
+            "gamepadspace", "shanwan", "山湾", "q34u", "q42", "q36",
+        )) and vid != MICROSOFT:
+            family = "shanwan"
+            name = (entry.get("product_string") or "").strip() or "ShanWan Controller"
+        elif vid == NINTENDO and pid in NINTENDO_PRODUCTS:
             family, name = "switch", NINTENDO_PRODUCTS[pid]
         elif vid == SONY and pid in SONY_PRODUCTS:
             family, name = "sony", SONY_PRODUCTS[pid]
@@ -535,7 +575,7 @@ def scan_gamepads(state: dict) -> list[Device]:
         elif vid in (FLYDIGI_V1, FLYDIGI_V2):
             family = "flydigi"
             name = FLYDIGI_PRODUCTS.get(pid, name or "Flydigi Controller")
-        elif vid == SHANWAN or (vid == SHANWAN_ALT and "betop" not in (name or "").lower()):
+        elif vid == SHANWAN or (vid == SHANWAN_ALT and "betop" not in name_l):
             family = "shanwan"
             raw = (entry.get("product_string") or name or "").strip()
             # Prefer OEM strings that still carry Q34U / Q42 even in X-mode clones.
@@ -546,6 +586,12 @@ def scan_gamepads(state: dict) -> list[Device]:
             family = "betop"
             name = name or "BETOP Controller"
         else:
+            # Diagnostics: gamepad usage that we still don't claim.
+            usage_page = int(entry.get("usage_page") or 0)
+            usage = int(entry.get("usage") or 0)
+            if usage_page == 1 and usage in (4, 5):  # joystick / gamepad
+                log("hid", f"unmatched vid={vid:04x} pid={pid:04x} "
+                    f"product={name!r} mfg={entry.get('manufacturer_string')!r}")
             continue
         seen.add(path)
         product = (entry.get("product_string") or name or "").strip() or name
@@ -583,6 +629,8 @@ def scan_gamepads(state: dict) -> list[Device]:
                 reading = _read_gamesir_battery(dev)
             elif family == "flydigi":
                 reading = _read_flydigi_battery(dev, vid)
+            elif family == "shanwan":
+                reading = _read_shanwan_battery(dev)
         except OSError as e:
             log("hid", f"read failed {family}: {e}")
             reading = None

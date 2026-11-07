@@ -162,7 +162,13 @@ class InputPage(QWidget):
             self._sync_pad_style_combo(self._profile.pad_style or "")
             self.gamepad.set_device_name(self._pad_hint_name, self._profile.pad_style or None)
             self._set_grab(False)
-            if looks_like_xbox_spoof_name(self._pad_hint_name) and not self._profile.pad_style:
+            name_l = (dev.name or "").lower()
+            if "gamepadspace" in name_l:
+                self._hint.setText(
+                    "D 档（GamepadSpace）已识别。请按实体键看高亮；改建后打开「启用映射」"
+                    "可将手柄键注入为键盘键。电量在 D 档也常不可读。"
+                )
+            elif looks_like_xbox_spoof_name(self._pad_hint_name) and not self._profile.pad_style:
                 self._hint.setText(
                     "此手柄蓝牙名像 Xbox（国产 X 档常见伪装）。请在上方选择实际型号"
                     "（如山湾 Q34U 二代）以显示背键/小肩键；电量在此模式下通常不可读。"

@@ -581,10 +581,12 @@ _BRAND_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("shanwan_q34u2", (
         "q34u2", "q34u 2", "q34u二代", "q34u 二代", "q34uⅡ", "q34uⅱ",
         "shanwan q34u2", "山湾q34u2", "山弯q34u2",
+        # D-mode BT alias; Q34U 二代 still advertises GamepadSpace-Q34U.
+        "gamepadspace-q34u", "gamepadspace_q34u",
     )),
     ("shanwan_q34u", ("q34u", "q34u-8k", "shanwan q34", "山湾q34", "山弯q34")),
     ("shanwan_q42", ("q42xl", "q42", "shanwan q42", "山湾q42", "山弯q42")),
-    ("shanwan", ("shanwan", "shan wan", "山湾", "山弯", "shootingplus")),
+    ("shanwan", ("shanwan", "shan wan", "山湾", "山弯", "shootingplus", "gamepadspace")),
     # 盖世小鸡 — 具体型号优先
     ("gamesir_tarantula", (
         "tarantula", "九尾狐", "glyphswap",

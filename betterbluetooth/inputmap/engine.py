@@ -87,6 +87,40 @@ class InputMapService(QObject):
             "connected": d.connected,
         } for d in self._devices]
         self.backend.sync_devices(payload)
+        # Names for RawGameController matching (D-mode GamepadSpace etc.).
+        pad_names = {
+            device_key(d): (d.name or "")
+            for d in self._devices
+            if d.kind == DeviceKind.GAMEPAD and d.connected
+        }
+        self._xinput.set_device_names(pad_names)
+        # Active gamepad → keyboard remap (Windows inject path).
+        remap_key = self._test_key
+        remap_rules: dict[str, list[str]] = {}
+        remap_on = False
+        if remap_key:
+            profile = self.store.profiles.get(remap_key)
+            if (
+                profile
+                and profile.enabled
+                and self.store.master_enabled
+                and profile.kind == "gamepad"
+                and profile.rules
+            ):
+                remap_rules = profile.rule_map()
+                remap_on = True
+        else:
+            # No test page open: still remap the sole enabled gamepad profile.
+            enabled = [
+                p for p in self.store.profiles.values()
+                if p.enabled and self.store.master_enabled and p.kind == "gamepad" and p.rules
+            ]
+            if len(enabled) == 1:
+                remap_rules = enabled[0].rule_map()
+                remap_on = True
+                pad_names.setdefault(enabled[0].device_key, enabled[0].name or "")
+                self._xinput.set_device_names(pad_names)
+        self._xinput.set_remap(remap_rules, remap_on)
         # Joy-Con keep-alive / test targets.
         targets = {}
         rules: dict[str, dict[str, list[str]]] = {}
