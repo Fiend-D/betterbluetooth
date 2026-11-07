@@ -83,10 +83,13 @@ class RAWINPUT(ctypes.Structure):
     _fields_ = [("header", RAWINPUTHEADER), ("keyboard", RAWKEYBOARD)]
 
 
+# LRESULT is pointer-sized; c_long truncates on Win64 and SetWindowsHookEx then fails.
+LRESULT = ctypes.c_ssize_t
 LowLevelKeyboardProc = ctypes.WINFUNCTYPE(
-    ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+    LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
 
-WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_long, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+HWND_MESSAGE = wintypes.HWND(-3)
 
 
 class WNDCLASS(ctypes.Structure):
@@ -279,7 +282,7 @@ class WindowsHookBackend(InputBackend):
                 return "总开关未开启（设置 → 系统级按键映射）"
             return "已开启总开关，但没有已启用的键盘映射规则"
         if self._hook is None:
-            return "键盘钩子未安装（可尝试以管理员身份运行）"
+            return "键盘钩子未安装（无需管理员；请完全退出后重开应用）"
         if len(profiles) == 1:
             return f"系统改键生效中：{profiles[0].name or profiles[0].device_key}（Windows 对全局键盘钩子生效）"
         return f"系统改键已启用 {len(profiles)} 套方案（多键盘时依赖设备识别，可能不稳定）"
@@ -292,24 +295,43 @@ class WindowsHookBackend(InputBackend):
         cls.lpfnWndProc = self._wndproc
         cls.hInstance = hinst
         cls.lpszClassName = "BetterBluetoothInput"
-        if not user32.RegisterClassW(ctypes.byref(cls)):
-            # Already registered from a previous run in-process.
-            pass
-        hwnd = user32.CreateWindowExW(0, "BetterBluetoothInput", "BBInput", 0,
-                                      0, 0, 0, 0, None, None, hinst, None)
+        atom = user32.RegisterClassW(ctypes.byref(cls))
+        if not atom:
+            # Already registered from a previous run in-process is fine.
+            err = ctypes.get_last_error()
+            if err not in (0, 1410):  # ERROR_CLASS_ALREADY_EXISTS
+                self._status(f"注册输入窗口类失败（错误 {err}）")
+        # Message-only window: reliable WM_INPUT sink without a visible HWND.
+        hwnd = user32.CreateWindowExW(
+            0, "BetterBluetoothInput", "BBInput", 0,
+            0, 0, 0, 0, HWND_MESSAGE, None, hinst, None)
         self._hwnd = hwnd
+        if not hwnd:
+            self._status(f"创建输入窗口失败（错误 {ctypes.get_last_error()}）")
         rid = (RAWINPUTDEVICE * 1)()
         rid[0].usUsagePage = 0x01
         rid[0].usUsage = 0x06  # keyboard
         rid[0].dwFlags = RIDEV_INPUTSINK
         rid[0].hwndTarget = hwnd
-        if not user32.RegisterRawInputDevices(rid, 1, ctypes.sizeof(RAWINPUTDEVICE)):
-            self._status("注册 Raw Input 失败")
+        if hwnd and not user32.RegisterRawInputDevices(rid, 1, ctypes.sizeof(RAWINPUTDEVICE)):
+            self._status(f"注册 Raw Input 失败（错误 {ctypes.get_last_error()}）")
         self._refresh_handle_map()
+        # Keep a strong reference — GC of the callback silently breaks the hook.
         self._proc = LowLevelKeyboardProc(self._ll_keyboard)
-        self._hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, hinst, 0)
+        user32.SetWindowsHookExW.restype = wintypes.HHOOK
+        user32.SetWindowsHookExW.argtypes = [
+            ctypes.c_int, LowLevelKeyboardProc, wintypes.HINSTANCE, wintypes.DWORD,
+        ]
+        # WH_KEYBOARD_LL runs in this process; hMod must be NULL (PyInstaller/frozen
+        # GetModuleHandleW(None) often makes SetWindowsHookEx fail even as admin).
+        self._hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, None, 0)
         if not self._hook:
-            self._status("安装键盘钩子失败（可能需要管理员权限）")
+            self._hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, hinst, 0)
+        if not self._hook:
+            err = ctypes.get_last_error()
+            self._status(f"安装键盘钩子失败（错误 {err}；通常无需管理员，请重启应用后重试）")
+        else:
+            self._status("键盘钩子已就绪")
         msg = MSG()
         while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
             user32.TranslateMessage(ctypes.byref(msg))

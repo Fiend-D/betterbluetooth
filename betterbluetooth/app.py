@@ -349,6 +349,7 @@ def _self_test() -> int:
     if sys.platform == "win32":
         modules += ["betterbluetooth.backends.windows", "betterbluetooth.backends.win_setupapi",
                     "betterbluetooth.peripherals.hidpp", "betterbluetooth.peripherals.switch",
+                    "betterbluetooth.peripherals.gamepad_hid",
                     "betterbluetooth.inputmap.windows_hook"]
     else:
         modules += ["betterbluetooth.backends.bluez", "betterbluetooth.peripherals.upower",

@@ -124,8 +124,9 @@ class InputPage(QWidget):
         self.keepalive.set_checked_silent(self._profile.joycon_keepalive)
         if dev.kind == DeviceKind.GAMEPAD:
             self.visuals.setCurrentWidget(self.gamepad)
+            self.gamepad.set_device_name(dev.name)
             self._set_grab(False)
-            self._hint.setText("请按手柄按键查看高亮；点周围映射框后再按目标键（可为键盘键）完成改建。")
+            self._hint.setText("请按手柄按键查看高亮；点示意图按键后再按目标键（可为键盘键）完成改建。")
         else:
             self.visuals.setCurrentWidget(self.keyboard)
             self.keyboard.set_device_name(dev.name)
