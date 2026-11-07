@@ -753,6 +753,16 @@ class SettingsPage(QWidget):
             ("", "", self.input_status),
         ])
 
+        self.hid_capture = self._switch(s.hid_capture)
+        open_logs = button("打开文件夹")
+        open_logs.clicked.connect(self._open_log_dir)
+        self._group(lay, "诊断", [
+            ("记录手柄原始数据",
+             "只读记录电量未知手柄的 HID 报告（不向手柄发送任何数据），用于找出电量字节；"
+             "手柄断开 / 重连会自动分段，可长期开着", self.hid_capture),
+            ("日志位置", "hid-capture.log · debug-input.log", open_logs),
+        ])
+
         self.history_switch = self._switch(s.history_enabled)
         self.history_days = self._spin(1, 365, s.history_days, " 天")
         clear = button("清除全部")
@@ -774,7 +784,7 @@ class SettingsPage(QWidget):
 
         self.tray_picker.changed.connect(self._save)
         for w in (self.low_switch, self.conn_switch, self.autostart, self.history_switch,
-                  self.colored_switch, self.input_remap):
+                  self.colored_switch, self.input_remap, self.hid_capture):
             w.toggled.connect(self._save)
         for w in (self.threshold, self.interval, self.history_days):
             w.valueChanged.connect(self._save)
@@ -787,6 +797,13 @@ class SettingsPage(QWidget):
         cap = getattr(self.ctl, "inputmap", None)
         if cap is not None:
             self.input_status.setText(cap.capability.get("message", ""))
+
+    @staticmethod
+    def _open_log_dir() -> None:
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        from ..config import data_dir
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(data_dir())))
 
     def set_backend_info(self, text: str) -> None:
         self.about.setText(text)
@@ -855,6 +872,7 @@ class SettingsPage(QWidget):
         s.history_days = self.history_days.value()
         s.autostart = self.autostart.isChecked()
         s.input_remap_enabled = self.input_remap.isChecked()
+        s.hid_capture = self.hid_capture.isChecked()
         self.tray_picker.retheme()
         self.changed.emit()
 

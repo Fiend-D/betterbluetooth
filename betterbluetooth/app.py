@@ -60,6 +60,7 @@ class Controller(QObject):
         self.worker = BackendWorker(self.settings.refresh_interval, mock)
         self.inputmap = InputMapService()
         self.inputmap.store.master_enabled = self.settings.input_remap_enabled
+        self._apply_hid_capture()
         self.tray: TrayManager | None = None
         self.flyout = Flyout(self)
         self.tray = TrayManager(self)
@@ -224,6 +225,13 @@ class Controller(QObject):
 
     # ---- settings / theme ----
 
+    def _apply_hid_capture(self) -> None:
+        try:
+            from .peripherals import hid_capture
+        except ImportError:  # hidapi missing
+            return
+        hid_capture.set_enabled(self.settings.hid_capture)
+
     def _on_settings_changed(self) -> None:
         s = self.settings
         if s.autostart != autostart.is_enabled():
@@ -235,6 +243,7 @@ class Controller(QObject):
         self.theme.apply()
         s.save()
         self.inputmap.set_master(s.input_remap_enabled)
+        self._apply_hid_capture()
         if self.tray:
             self.tray.update(self.devices)
         self.flyout.devices_page.set_devices(self.devices)

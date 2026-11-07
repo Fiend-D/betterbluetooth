@@ -50,6 +50,7 @@ class Settings:
     tray_devices: dict[str, bool] = field(default_factory=dict)
     aliases: dict[str, str] = field(default_factory=dict)
     input_remap_enabled: bool = False
+    hid_capture: bool = False
 
     @classmethod
     def path(cls) -> Path:

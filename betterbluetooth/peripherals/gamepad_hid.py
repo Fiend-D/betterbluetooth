@@ -476,6 +476,11 @@ def scan_gamepads(state: dict) -> list[Device]:
         log("hid", f"enumerate failed: {e}")
         entries = []
     log("hid", f"enumerate={len(entries)}")
+    try:
+        from .hid_capture import sample as capture_sample
+        capture_sample(entries)
+    except Exception as e:  # noqa: BLE001
+        log("hid", f"capture failed: {e}")
     xbox_bt = any(
         e.get("vendor_id") == MICROSOFT and e.get("product_id") in XBOX_BT_ONLY_PIDS
         for e in entries
