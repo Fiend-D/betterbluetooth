@@ -83,38 +83,27 @@ _HAT_MASK = {1: 1, 2: 1 | 2, 3: 2, 4: 4 | 2, 5: 4, 6: 4 | 8, 7: 8, 8: 1 | 8}  # 
 
 
 class _PadMapping:
-    """Parsed gcdb entry: button index / hat bit / axis → our codes."""
+    """Parsed gcdb entry: button index / hat bit → our codes.
+
+    gcdb axis indices are not used: SDL numbers axes by sorted HID usage,
+    while WinRT RawGameController keeps report-descriptor order, so "a3" in
+    gcdb is a different axis here (seen on ShanWan D-mode 1949:0402).
+    """
 
     def __init__(self, fields: str) -> None:
         self.buttons: dict[int, str] = {}
         self.hats: dict[tuple[int, int], str] = {}
-        self.axis_buttons: list[tuple[int, str, bool, str]] = []  # (axis, half, invert, code)
-        self.sticks: dict[str, tuple[int, bool]] = {}
         for item in fields.split(","):
             target, _, src = item.partition(":")
-            if not src:
+            code = _GCDB_TARGET.get(target)
+            if not code or not src:
                 continue
-            half = ""
-            if target[:1] in "+-":
-                continue  # split half-axis targets (rare); left at default
-            if src[:1] in "+-":
-                half, src = src[0], src[1:]
-            invert = src.endswith("~")
-            src = src.rstrip("~")
             try:
-                if target in ("leftx", "lefty", "rightx", "righty") and src.startswith("a"):
-                    self.sticks[target] = (int(src[1:]), invert)
-                    continue
-                code = _GCDB_TARGET.get(target)
-                if not code:
-                    continue
                 if src.startswith("b"):
                     self.buttons[int(src[1:])] = code
                 elif src.startswith("h"):
                     hat, _, mask = src[1:].partition(".")
                     self.hats[(int(hat), int(mask))] = code
-                elif src.startswith("a"):
-                    self.axis_buttons.append((int(src[1:]), half, invert, code))
             except ValueError:
                 continue
 
@@ -167,6 +156,7 @@ class WinGamepadPoller:
         self._device_names: dict[str, str] = {}  # device_key → display name
         self._remap_rules: dict[str, list[str]] = {}
         self._remap_on = False
+        self._remap_target: str | None = None
         self._on_event: Callable[[InputEvent], None] | None = None
         self._lock = threading.Lock()
         self._prev: dict[str, set[str]] = {}
@@ -202,10 +192,12 @@ class WinGamepadPoller:
         with self._lock:
             self._device_names = dict(names)
 
-    def set_remap(self, rules: dict[str, list[str]] | None, enabled: bool) -> None:
+    def set_remap(self, rules: dict[str, list[str]] | None, enabled: bool,
+                  target: str | None = None) -> None:
         with self._lock:
             self._remap_rules = dict(rules or {})
             self._remap_on = bool(enabled and self._remap_rules)
+            self._remap_target = target
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -227,13 +219,11 @@ class WinGamepadPoller:
                 names = dict(self._device_names)
                 remap_on = self._remap_on
                 rules = dict(self._remap_rules)
+                remap_target = self._remap_target
             if not test and not remap_on:
                 self._stop.wait(0.2)
                 continue
-            target = test
-            # Remap without an open test page still needs a device key — use sole name.
-            if target is None and remap_on and len(names) == 1:
-                target = next(iter(names))
+            target = test or (remap_target if remap_on else None)
             if target:
                 want = names.get(target) or ""
                 # D-mode GamepadSpace is HID-only; don't let a leftover X-mode
@@ -375,15 +365,6 @@ class WinGamepadPoller:
                                 pressed.add(code)
                     elif si == 0:
                         pressed.update(_HAT_DIRS.get(pos, ()))
-            if mapping and axes is not None:
-                for ai, half, invert, code in mapping.axis_buttons:
-                    if ai >= n_ax:
-                        continue
-                    v = float(axes[ai])
-                    if invert:
-                        v = 1.0 - v
-                    if (half == "+" and v > 0.75) or (half == "-" and v < 0.25) or (not half and v > 0.6):
-                        pressed.add(code)
             prev = self._prev.get(slot, set())
             for code in pressed - prev:
                 self._emit(test, code, True, remap_on, rules)
@@ -391,23 +372,18 @@ class WinGamepadPoller:
                 self._emit(test, code, False, remap_on, rules)
             self._prev[slot] = pressed
             if axes is not None and n_ax >= 2 and self._on_event:
-                # Without a gcdb entry only HID X/Y (axes 0/1, always the left
-                # stick) are known; the right stick stays centred.
-                stick_src = {"leftx": (0, False), "lefty": (1, False)}
-                if mapping:
-                    stick_src.update(mapping.sticks)
-
-                def _axis(target: str) -> float:
-                    src = stick_src.get(target)
-                    if src is None or src[0] >= n_ax:
+                # WinRT keeps descriptor order. Gamepad descriptors list the
+                # sticks first (X, Y, then Z/Rz or Rx/Ry for the right stick)
+                # with triggers after — confirmed on ShanWan D-mode (6 axes:
+                # 0/1 left, 2/3 right, 4/5 triggers).
+                def _axis(i: int) -> float:
+                    if i >= n_ax:
                         return 0.0
-                    v = float(axes[src[0]])
-                    if src[1]:
-                        v = 1.0 - v
-                    return max(-1.0, min(1.0, v * 2 - 1))
+                    return max(-1.0, min(1.0, float(axes[i]) * 2 - 1))
 
                 try:
-                    sticks = (_axis("leftx"), _axis("lefty"), _axis("rightx"), _axis("righty"))
+                    sticks = (_axis(0), _axis(1), _axis(2) if n_ax >= 4 else 0.0,
+                              _axis(3) if n_ax >= 4 else 0.0)
                     lx, ly, rx, ry = sticks
                     prev_s = self._prev_sticks.get(slot)
                     if prev_s is None or any(abs(a - b) > 0.04 for a, b in zip(sticks, prev_s)):

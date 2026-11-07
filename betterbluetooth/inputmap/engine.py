@@ -116,11 +116,12 @@ class InputMapService(QObject):
                 if p.enabled and self.store.master_enabled and p.kind == "gamepad" and p.rules
             ]
             if len(enabled) == 1:
+                remap_key = enabled[0].device_key
                 remap_rules = enabled[0].rule_map()
                 remap_on = True
-                pad_names.setdefault(enabled[0].device_key, enabled[0].name or "")
+                pad_names.setdefault(remap_key, enabled[0].name or "")
                 self._xinput.set_device_names(pad_names)
-        self._xinput.set_remap(remap_rules, remap_on)
+        self._xinput.set_remap(remap_rules, remap_on, remap_key)
         # Joy-Con keep-alive / test targets.
         targets = {}
         rules: dict[str, dict[str, list[str]]] = {}

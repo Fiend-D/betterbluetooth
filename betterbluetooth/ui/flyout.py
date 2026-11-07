@@ -340,8 +340,16 @@ class Flyout(QWidget):
             self.scan_page.stop()
             self.show_page("devices")
         elif self.stack.currentWidget() is self.input_page:
+            self._input_resume = self.input_page.address
             self.input_page.set_device(None)
         super().hideEvent(e)
+
+    def showEvent(self, e):  # noqa: N802
+        super().showEvent(e)
+        resume = getattr(self, "_input_resume", None)
+        self._input_resume = None
+        if resume and self.stack.currentWidget() is self.input_page:
+            self.input_page.set_device(resume)
 
     # ---- dragging ----
 
