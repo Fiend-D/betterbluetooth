@@ -1,7 +1,7 @@
 """Gamepad visual themes + face-button layouts matched by Bluetooth device name / model."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -456,8 +456,128 @@ STYLES: dict[str, GamepadStyle] = {
 }
 
 
+_P2 = (("BTN_EXTRA1", "M1"), ("BTN_EXTRA2", "M2"))
+_P4 = (("BTN_EXTRA1", "M1"), ("BTN_EXTRA2", "M2"),
+       ("BTN_EXTRA3", "M3"), ("BTN_EXTRA4", "M4"))
+_P6 = _P4 + (("BTN_EXTRA5", "M5"), ("BTN_EXTRA6", "M6"))
+_BUMP = (("BTN_EXTRA5", "L4"), ("BTN_EXTRA6", "R4"))
+_CZ = (("BTN_C", "C"), ("BTN_Z", "Z"))
+
+
+def _variant(base: str, **kw) -> GamepadStyle:
+    return replace(STYLES[base], **kw)
+
+
+def _register_model_variants() -> None:
+    """Per-SKU overlays on brand bases (layout/extras differ by model line)."""
+    specs: list[GamepadStyle] = [
+        # —— Sony ——
+        _variant("playstation", id="dualsense_edge", label="DualSense Edge",
+                 brand_mark="EDGE", extras=_P4, has_touchpad=True,
+                 model_hint="DualSense Edge · 背键"),
+        # —— 盖世小鸡 GameSir（非对称 Xbox 系）——
+        _variant("gamesir", id="gamesir_g7_pro", label="G7 Pro", brand_mark="G7 Pro",
+                 extras=_P2, bumpers=(), model_hint="盖世小鸡 G7 Pro · Xbox授权"),
+        _variant("gamesir", id="gamesir_g7_se", label="G7 SE", brand_mark="G7 SE",
+                 extras=_P2, bumpers=(), model_hint="盖世小鸡 G7 SE · 可锁背键"),
+        _variant("gamesir", id="gamesir_g7", label="G7", brand_mark="G7",
+                 extras=_P2, bumpers=(), model_hint="盖世小鸡 G7"),
+        _variant("gamesir", id="gamesir_nova", label="启明星", brand_mark="Nova",
+                 extras=_P2, bumpers=_BUMP, model_hint="盖世小鸡 启明星 / 启明星2"),
+        _variant("gamesir", id="gamesir_cyclone", label="风行者", brand_mark="Cyclone",
+                 extras=_P2, bumpers=_BUMP, model_hint="盖世小鸡 风行者 / Cyclone"),
+        _variant("gamesir", id="gamesir_kaleid", label="幻境", brand_mark="Kaleid",
+                 extras=_P2, bumpers=(), model_hint="盖世小鸡 幻境 Kaleid / T4"),
+        _variant("gamesir", id="gamesir_shadow", label="影舞者", brand_mark="影舞者",
+                 extras=_P2, bumpers=(), model_hint="盖世小鸡 影舞者"),
+        _variant("gamesir", id="gamesir_helios", label="天启", brand_mark="天启",
+                 extras=_P2, bumpers=(), model_hint="盖世小鸡 天启"),
+        _variant("gamesir", id="gamesir_uranus", label="天王星", brand_mark="天王星",
+                 extras=_P4, bumpers=_BUMP, model_hint="盖世小鸡 天王星 8K"),
+        _variant("gamesir", id="gamesir_supernova", label="超新星", brand_mark="超新星",
+                 extras=_P2, bumpers=_BUMP, model_hint="盖世小鸡 超新星"),
+        # 对称 / 九尾狐 / Tarantula：多宏键
+        _variant("gamesir_ps", id="gamesir_tarantula", label="九尾狐", brand_mark="九尾狐",
+                 extras=(("BTN_EXTRA1", "C1"), ("BTN_EXTRA2", "C2"),
+                         ("BTN_EXTRA3", "C3"), ("BTN_EXTRA4", "C4"),
+                         ("BTN_EXTRA5", "C5"), ("BTN_EXTRA6", "C6"),
+                         *_CZ),
+                 bumpers=(), has_touchpad=True,
+                 model_hint="盖世小鸡 九尾狐 / Tarantula · 对称+宏键"),
+        # —— 北通 Betop ——
+        _variant("betop", id="betop_kunpeng70", label="鲲鹏70", brand_mark="鲲鹏70",
+                 extras=_P6, bumpers=(), model_hint="北通 鲲鹏70 · 6拓展键"),
+        _variant("betop", id="betop_kunpeng50", label="鲲鹏50", brand_mark="鲲鹏50",
+                 extras=_P4, bumpers=(), model_hint="北通 鲲鹏50 · 4背键+智控屏"),
+        _variant("betop", id="betop_kunpeng40", label="鲲鹏40", brand_mark="鲲鹏40",
+                 extras=_P2, bumpers=(), model_hint="北通 鲲鹏40 / 星闪"),
+        _variant("betop", id="betop_kunpeng20", label="鲲鹏20", brand_mark="鲲鹏20",
+                 extras=_P2, bumpers=(), model_hint="北通 鲲鹏20"),
+        _variant("betop", id="betop_zeus2", label="宙斯2", brand_mark="宙斯2",
+                 extras=_P4, bumpers=_BUMP, model_hint="北通 宙斯2 光轴精英"),
+        _variant("betop", id="betop_zeus", label="宙斯", brand_mark="宙斯",
+                 extras=_P4, bumpers=(), model_hint="北通 宙斯 / 宙斯Pro"),
+        _variant("betop", id="betop_asura3", label="阿修罗3", brand_mark="阿修罗3",
+                 extras=_P2, bumpers=(), model_hint="北通 阿修罗3 / 3S"),
+        _variant("betop", id="betop_asura2_mech", label="阿修罗2Pro 机械", brand_mark="机械",
+                 extras=_P2, bumpers=(), model_hint="北通 阿修罗2Pro 机械版"),
+        _variant("betop", id="betop_asura2", label="阿修罗2", brand_mark="阿修罗2",
+                 extras=_P2, bumpers=(), model_hint="北通 阿修罗2 / 2Pro"),
+        _variant("betop", id="betop_pangu", label="盘古", brand_mark="盘古",
+                 extras=_P4, bumpers=_BUMP, model_hint="北通 盘古智控"),
+        _variant("betop", id="betop_bat", label="蝙蝠", brand_mark="蝙蝠",
+                 extras=(), bumpers=(), model_hint="北通 蝙蝠系列"),
+        _variant("betop", id="betop_sparta", label="斯巴达", brand_mark="斯巴达",
+                 extras=(), bumpers=(), model_hint="北通 斯巴达系列"),
+        # —— 飞智 Flydigi ——
+        _variant("flydigi", id="flydigi_apex5", label="八爪鱼5", brand_mark="APEX 5",
+                 extras=_P4 + _CZ, bumpers=_BUMP,
+                 model_hint="飞智 八爪鱼5 / Apex 5 · 4背键+2小肩"),
+        _variant("flydigi", id="flydigi_apex4", label="八爪鱼4", brand_mark="APEX 4",
+                 extras=_P4 + _CZ, bumpers=_BUMP,
+                 model_hint="飞智 八爪鱼4 / Apex 4"),
+        _variant("flydigi", id="flydigi_apex3", label="八爪鱼3", brand_mark="APEX 3",
+                 extras=_P4 + _CZ, bumpers=_BUMP,
+                 model_hint="飞智 八爪鱼3 / Apex 3"),
+        _variant("flydigi", id="flydigi_apex", label="八爪鱼", brand_mark="APEX",
+                 extras=_P4 + _CZ, bumpers=_BUMP,
+                 model_hint="飞智 八爪鱼 / Apex"),
+        _variant("flydigi", id="flydigi_vader5", label="Vader 5", brand_mark="Vader5",
+                 extras=_P4, bumpers=_BUMP,
+                 model_hint="飞智 Vader 5 / 5 Pro / 5S"),
+        _variant("flydigi", id="flydigi_vader4", label="Vader 4", brand_mark="Vader4",
+                 extras=_P4, bumpers=_BUMP,
+                 model_hint="飞智 Vader 4 / 4 Pro"),
+        _variant("flydigi", id="flydigi_vader3", label="Vader 3", brand_mark="Vader3",
+                 extras=_P4, bumpers=_BUMP,
+                 model_hint="飞智 Vader 3 / 3 Pro"),
+        _variant("flydigi", id="flydigi_direwolf", label="冰原狼", brand_mark="Direwolf",
+                 extras=_P2, bumpers=_BUMP,
+                 model_hint="飞智 冰原狼 Direwolf"),
+        # —— 机械师 Machenike ——
+        _variant("gamesir", id="machenike_g6", label="机械师 G6", brand_mark="G6",
+                 accent="#00BCD4", pressed="#4DD0E1",
+                 extras=_P4, bumpers=_BUMP,
+                 model_hint="机械师 G6 / G6 Pro"),
+        _variant("gamesir", id="machenike_g5", label="机械师 G5", brand_mark="G5",
+                 accent="#00BCD4", pressed="#4DD0E1",
+                 extras=_P2, bumpers=(),
+                 model_hint="机械师 G5 Pro / G5 Pro Max"),
+        _variant("gamesir", id="machenike", label="机械师", brand_mark="Machenike",
+                 accent="#00BCD4", pressed="#4DD0E1",
+                 extras=_P2, bumpers=(),
+                 model_hint="机械师 Machenike"),
+    ]
+    for s in specs:
+        STYLES[s.id] = s
+
+
+_register_model_variants()
+
+
 # More specific rules first. Tokens matched as substrings of lowercased name.
 _BRAND_RULES: list[tuple[str, tuple[str, ...]]] = [
+    # 山湾
     ("shanwan_q34u2", (
         "q34u2", "q34u 2", "q34u二代", "q34u 二代", "q34uⅡ", "q34uⅱ",
         "shanwan q34u2", "山湾q34u2", "山弯q34u2",
@@ -465,11 +585,62 @@ _BRAND_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("shanwan_q34u", ("q34u", "q34u-8k", "shanwan q34", "山湾q34", "山弯q34")),
     ("shanwan_q42", ("q42xl", "q42", "shanwan q42", "山湾q42", "山弯q42")),
     ("shanwan", ("shanwan", "shan wan", "山湾", "山弯", "shootingplus")),
+    # 盖世小鸡 — 具体型号优先
+    ("gamesir_tarantula", (
+        "tarantula", "九尾狐", "glyphswap",
+    )),
+    ("gamesir_ps", ("t3 pro",)),
+    ("gamesir_uranus", ("天王星", "uranus")),
+    ("gamesir_nova", ("启明星", "nova lite", "nova 2", "nova2", "启明星2")),
+    ("gamesir_cyclone", ("cyclone", "风行者", "风行者2", "风行者pro")),
+    ("gamesir_supernova", ("超新星", "supernova")),
+    ("gamesir_kaleid", ("kaleid", "幻境", "t4 kaleid", "t4幻境")),
+    ("gamesir_shadow", ("影舞者", "shadow dancer")),
+    ("gamesir_helios", ("天启", "helios")),
+    ("gamesir_g7_pro", ("g7 pro", "g7pro")),
+    ("gamesir_g7_se", ("g7 se", "g7se")),
+    ("gamesir_g7", ("g7",)),
+    ("gamesir", (
+        "gamesir", "盖世小鸡", "小鸡", "g8+", "g8 se", "x2s", "x2 pro", "x3 pro",
+        "x3北极", "x5s", "x5 lite", "观星者", "灵狐",
+    )),
+    # 北通 — 具体型号优先（机械版单独）
+    ("betop_asura2_mech", (
+        "阿修罗2pro机械", "阿修罗2pro 机械", "asura 2pro mech", "asura2pro机械",
+        "阿修罗2机械", "机械版", "无线机械", "多模机械",
+    )),
+    ("betop_kunpeng70", ("鲲鹏70", "kunpeng70", "kunpeng 70")),
+    ("betop_kunpeng50", ("鲲鹏50", "kunpeng50", "kunpeng 50")),
+    ("betop_kunpeng40", ("鲲鹏40", "kunpeng40", "kunpeng 40")),
+    ("betop_kunpeng20", ("鲲鹏20", "kunpeng20", "kunpeng 20", "鲲鹏")),
+    ("betop_zeus2", ("宙斯2", "zeus 2", "zeus2", "宙斯二")),
+    ("betop_zeus", ("宙斯", "zeus")),
+    ("betop_asura3", ("阿修罗3", "asura 3", "asura3", "阿修罗3s")),
+    ("betop_asura2", ("阿修罗2", "asura 2", "asura2", "阿修罗2pro", "阿修罗")),
+    ("betop_pangu", ("盘古", "pangu")),
+    ("betop_bat", ("蝙蝠", "batop bat", "bd4", "bd2")),
+    ("betop_sparta", ("斯巴达", "sparta")),
+    ("betop", ("betop", "北通", "batop", "月影", "绝影", "幻影豹")),
+    # 飞智
+    ("flydigi_apex5", ("apex 5", "apex5", "八爪鱼5", "八爪鱼 5")),
+    ("flydigi_apex4", ("apex 4", "apex4", "八爪鱼4", "八爪鱼 4")),
+    ("flydigi_apex3", ("apex 3", "apex3", "八爪鱼3", "八爪鱼 3")),
+    ("flydigi_apex", ("apex", "八爪鱼")),
+    ("flydigi_vader5", ("vader 5", "vader5", "vader 5 pro", "vader5 pro", "vader 5s")),
+    ("flydigi_vader4", ("vader 4", "vader4", "vader 4 pro", "vader4 pro")),
+    ("flydigi_vader3", ("vader 3", "vader3", "vader 3 pro", "vader3 pro")),
+    ("flydigi_direwolf", ("direwolf", "冰原狼")),
+    ("flydigi", ("flydigi", "飞智", "vader")),
+    # 机械师
+    ("machenike_g6", ("g6 pro", "g6pro", "machenike g6", "机械师g6", "机械师 g6")),
+    ("machenike_g5", ("g5 pro", "g5pro", "machenike g5", "机械师g5", "机械师 g5")),
+    ("machenike", ("machenike", "机械师")),
     ("easysmx", ("easysmx", "easy smx", "易速马", "x20 pro", "x20pro", "s05 pro", "s05pro", "赤兔")),
     ("xbox_elite", ("xbox elite", "elite series", "elite 2", "elite2")),
-    ("dualshock", ("dualshock", "ds4", "ps4")),
+    ("dualsense_edge", ("dualsense edge", "dual sense edge", "ds5 edge")),
+    ("dualshock", ("dualshock", "ds4")),
     ("playstation", (
-        "dualsense", "dual sense", "ps5", "sony interactive",
+        "dualsense", "dual sense", "ps5", "sony interactive", "playstation",
     )),
     ("joycon_l", ("joy-con (l)", "joycon (l)", "joy-con left", "joycon left", "joy-con l")),
     ("joycon_r", ("joy-con (r)", "joycon (r)", "joy-con right", "joycon right", "joy-con r")),
@@ -478,19 +649,8 @@ _BRAND_RULES: list[tuple[str, tuple[str, ...]]] = [
     )),
     ("8bitdo", (
         "8bitdo", "8bit do", "八位堂", "ultimate bluetooth", "ultimate 2c",
-        "pro 2", "pro2", "pro 3", "pro3", "sn30", "sf30",
+        "ultimate 3", "pro 2", "pro2", "pro 3", "pro3", "sn30", "sf30",
     )),
-    ("gamesir_ps", (
-        "tarantula", "t3 pro", "t4 kaleid", "supernova",
-    )),
-    ("gamesir", (
-        "gamesir", "盖世小鸡", "g7 pro", "g7 se", "g8+", "x2s", "x3 pro",
-        "kaleid", "cyclone",
-    )),
-    ("flydigi", (
-        "flydigi", "飞智", "vader", "apex 3", "apex 4", "apex 5", "apex3", "apex4", "apex5",
-    )),
-    ("betop", ("betop", "北通", "batop", "zeus", "asura", "阿修罗", "盘古")),
     ("gulikit", ("gulikit", "谷粒", "kingkong", "kk3", "kk2")),
     ("pxn", ("pxn", "莱仕达", "p5", "p50", "9603")),
     ("iine", ("iine", "良值", "lianzhi")),
@@ -510,7 +670,7 @@ def detect_gamepad_style(device_name: str | None) -> GamepadStyle:
         if style_id == "xbox":
             continue
         if any(tok in text for tok in tokens):
-            return STYLES[style_id]
+            return STYLES.get(style_id, STYLES["generic"])
     if "xbox" in text or "xinput" in text or "x-box" in text:
         if "elite" in text:
             return STYLES["xbox_elite"]
@@ -519,6 +679,11 @@ def detect_gamepad_style(device_name: str | None) -> GamepadStyle:
     if text in ("wireless controller", "sony wireless controller"):
         return STYLES["dualshock"]
     return STYLES["generic"]
+
+
+def listed_models() -> list[str]:
+    """Human-readable catalog for docs / debugging."""
+    return sorted({s.model_hint or s.label for s in STYLES.values() if s.id != "generic"})
 
 
 def shell_positions(shell: str) -> dict[str, tuple[float, float]]:
