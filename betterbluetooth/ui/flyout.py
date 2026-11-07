@@ -79,11 +79,6 @@ class Flyout(QWidget):
             self.stack.addWidget(page)
         lay.addWidget(self.stack, 1)
 
-        self.toasts = QVBoxLayout()
-        self.toasts.setContentsMargins(12, 0, 12, 8)
-        self.toasts.setSpacing(6)
-        lay.addLayout(self.toasts)
-
         self.footer = QFrame()
         self.footer.setObjectName("Footer")
         self.footer.setProperty("native", NATIVE_FRAME)
@@ -104,6 +99,16 @@ class Flyout(QWidget):
         self.settings_btn.clicked.connect(lambda: self.show_page("settings"))
         foot.addWidget(self.settings_btn)
         lay.addWidget(self.footer)
+
+        # Overlay toasts so showing/hiding them never reflows the page (no jump).
+        self.toast_host = QWidget(self.panel)
+        self.toast_host.setObjectName("ToastHost")
+        self.toast_host.setStyleSheet("#ToastHost { background: transparent; }")
+        self.toast_host.hide()
+        self.toasts = QVBoxLayout(self.toast_host)
+        self.toasts.setContentsMargins(12, 0, 12, 8)
+        self.toasts.setSpacing(6)
+        self.toasts.addStretch(1)
 
         self.handle = QFrame(self.panel)
         self.handle.setObjectName("DragHandle")
@@ -208,14 +213,32 @@ class Flyout(QWidget):
 
     # ---- messages ----
 
+    def _clear_overlay_toasts(self) -> None:
+        while self.toasts.count() > 1:
+            item = self.toasts.takeAt(1)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+    def _place_toast_host(self) -> None:
+        """Pin toast layer above the footer without taking layout space."""
+        host = self.toast_host
+        has = self.toasts.count() > 1
+        if not has:
+            host.hide()
+            return
+        foot_h = self.footer.height() if self.footer.isVisible() else 0
+        h = min(120, max(48, self.panel.height() // 5))
+        host.setGeometry(0, max(0, self.panel.height() - foot_h - h), self.panel.width(), h)
+        host.show()
+        host.raise_()
+
     def toast(self, text: str, kind: str = "info", timeout: int = 4000) -> InfoBar:
-        while self.toasts.count() >= 2:
-            old = self.toasts.takeAt(0).widget()
-            if old:
-                old.deleteLater()
+        self._clear_overlay_toasts()
         bar = InfoBar(text, kind)
         self.toasts.addWidget(bar)
-        bar.destroyed.connect(self.schedule_repaint)
+        self._place_toast_host()
+        bar.destroyed.connect(lambda *_: self._place_toast_host())
         if timeout:
             QTimer.singleShot(timeout, bar, bar.deleteLater)
         return bar
@@ -227,11 +250,13 @@ class Flyout(QWidget):
             holder[0].deleteLater()
             on_yes()
 
+        self._clear_overlay_toasts()
         bar = InfoBar(text, "warning", closable=False,
                       actions=[(action, yes, True), ("取消", lambda: holder[0].deleteLater(), False)])
         holder.append(bar)
         self.toasts.addWidget(bar)
-        bar.destroyed.connect(self.schedule_repaint)
+        self._place_toast_host()
+        bar.destroyed.connect(lambda *_: self._place_toast_host())
 
     # ---- show / hide ----
 
@@ -324,6 +349,7 @@ class Flyout(QWidget):
         super().resizeEvent(e)
         self.handle.move((self.panel.width() - self.handle.width()) // 2, 6)
         self.handle.raise_()
+        self._place_toast_host()
 
     def mousePressEvent(self, e):  # noqa: N802
         local = self.panel.mapFrom(self, e.position().toPoint())

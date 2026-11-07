@@ -176,7 +176,7 @@ class EdenGamepad(QWidget):
         avail_h = max(1.0, self.height() - tip_h - pad * 2)
         scale = min(avail_w / _DESIGN_W, avail_h / _DESIGN_H)
         cx = self.width() / 2
-        cy = pad + avail_h / 2 + (8 if self._armed else 0)
+        cy = pad + avail_h / 2
         return QPointF(cx, cy), scale
 
     def _to_widget(self, eden: QPointF, center: QPointF, scale: float) -> QPointF:
@@ -302,6 +302,37 @@ class EdenGamepad(QWidget):
             return QColor(self._c_button).lighter(130)
         return self._c_button
 
+    def _shown(self, code: str, default: str) -> str:
+        """Remapped keys replace the original legend entirely (large, readable)."""
+        if code == self._armed:
+            return default
+        return self._maps.get(code) or default
+
+    def _draw_legend(self, p: QPainter, rect: QRectF, code: str, default: str,
+                     *, accent: str = "", base_px: int = 12) -> None:
+        shown = self._shown(code, default)
+        remapped = bool(self._maps.get(code)) and code != self._armed
+        font = QFont(p.font())
+        font.setBold(True)
+        # Fit longer key names like "Space" / "Enter" without going unreadably small.
+        if len(shown) <= 2:
+            font.setPixelSize(base_px + 2)
+        elif len(shown) <= 4:
+            font.setPixelSize(base_px)
+        elif len(shown) <= 6:
+            font.setPixelSize(max(9, base_px - 2))
+        else:
+            font.setPixelSize(max(8, base_px - 3))
+            shown = shown[:8]
+        p.setFont(font)
+        if remapped:
+            p.setPen(QColor(self._style.accent))
+        elif accent and code not in self._pressed and code != self._armed:
+            p.setPen(QColor(accent))
+        else:
+            p.setPen(self._c_font)
+        p.drawText(rect, Qt.AlignCenter, shown)
+
     def _draw_triggers(self, p: QPainter, c: QPointF) -> None:
         p.setPen(QPen(self._c_outline, 1.2))
         # Body top ledge
@@ -319,26 +350,15 @@ class EdenGamepad(QWidget):
             p.setBrush(self._btn_color(code))
             p.drawPolygon(poly)
             label = next(h.label for h in self._hits if h.code == code)
-            p.setPen(self._c_font)
-            font = QFont(p.font())
-            font.setPixelSize(12)
-            font.setBold(True)
-            p.setFont(font)
-            p.drawText(QRectF(tx - 20, -138 + shift, 40, 18), Qt.AlignCenter, label)
+            self._draw_legend(p, QRectF(tx - 22, -138 + shift, 44, 18), code, label, base_px=12)
         # ZL / ZR — Eden side trigger rectangles approximated as rounded pills
         for code, x in (("BTN_TL2", -210), ("BTN_TR2", 210)):
             p.setBrush(self._btn_color(code))
             p.setPen(QPen(self._c_outline, 1.2))
             rect = QRectF(x - 28, -135, 56, 28)
             p.drawRoundedRect(rect, 8, 8)
-            p.setPen(self._c_font)
-            font = QFont(p.font())
-            font.setPixelSize(11)
-            font.setBold(True)
-            p.setFont(font)
             label = next(h.label for h in self._hits if h.code == code)
-            bound = self._maps.get(code, "")
-            p.drawText(rect, Qt.AlignCenter, bound[:5] if bound and code != self._armed else label)
+            self._draw_legend(p, rect, code, label, base_px=12)
 
     def _draw_body(self, p: QPainter, c: QPointF) -> None:
         p.setPen(QPen(self._c_outline, 1.4))
@@ -365,18 +385,15 @@ class EdenGamepad(QWidget):
             p.drawEllipse(center, 24, 24)
             p.setBrush(self._c_highlight2 if pressed else self._c_button2)
             p.drawEllipse(center, 17, 17)
-            # Live indicator dot (Eden green)
-            p.setPen(Qt.NoPen)
-            p.setBrush(self._c_indicator)
-            p.drawEllipse(center, 3.5, 3.5)
-            bound = self._maps.get(code, "")
-            if bound:
-                p.setPen(QColor(self._style.accent))
-                font = QFont(p.font())
-                font.setPixelSize(9)
-                font.setBold(True)
-                p.setFont(font)
-                p.drawText(QRectF(center.x() - 20, center.y() + 18, 40, 14), Qt.AlignCenter, bound[:5])
+            # Live indicator / remapped legend
+            remapped = self._shown(code, "")
+            if remapped and code in self._maps and code != self._armed:
+                self._draw_legend(
+                    p, QRectF(center.x() - 22, center.y() - 10, 44, 20), code, "L3", base_px=11)
+            else:
+                p.setPen(Qt.NoPen)
+                p.setBrush(self._c_indicator)
+                p.drawEllipse(center, 3.5, 3.5)
 
     def _draw_face(self, p: QPainter, c: QPointF) -> None:
         face = c + QPointF(105, -56)
@@ -392,40 +409,33 @@ class EdenGamepad(QWidget):
             p.setPen(QPen(self._c_outline, 1.2))
             p.setBrush(self._btn_color(code))
             p.drawEllipse(pos, 15, 15)
-            bound = self._maps.get(code, "")
-            if accent and code not in self._pressed and code != self._armed:
+            remapped = bool(self._maps.get(code)) and code != self._armed
+            if accent and not remapped and code not in self._pressed and code != self._armed:
                 p.setBrush(Qt.NoBrush)
                 p.setPen(QPen(QColor(accent), 2.0))
                 p.drawEllipse(pos, 11, 11)
-            font = QFont(p.font())
-            font.setBold(True)
-            if bound and code != self._armed:
-                font.setPixelSize(8)
-                p.setFont(font)
-                p.setPen(QColor(self._style.accent))
-                p.drawText(QRectF(pos.x() - 14, pos.y() - 4, 28, 16), Qt.AlignCenter, bound[:4])
-            else:
-                font.setPixelSize(12)
-                p.setFont(font)
-                col = QColor(accent) if accent and code not in self._pressed else self._c_font
-                if code in self._pressed or code == self._armed:
-                    col = self._c_font
-                p.setPen(col)
-                p.drawText(QRectF(pos.x() - 14, pos.y() - 10, 28, 20), Qt.AlignCenter, label)
+            self._draw_legend(
+                p, QRectF(pos.x() - 16, pos.y() - 11, 32, 22), code, label,
+                accent=accent, base_px=13,
+            )
 
     def _draw_dpad(self, p: QPainter, c: QPointF) -> None:
         origin = c + QPointF(-61, 0)
         arms = [
-            ("BTN_DPAD_UP", QPointF(0, -20), [(-10, -6), (-10, -22), (0, -34), (10, -22), (10, -6)]),
-            ("BTN_DPAD_DOWN", QPointF(0, 20), [(-10, 6), (-10, 22), (0, 34), (10, 22), (10, 6)]),
-            ("BTN_DPAD_LEFT", QPointF(-20, 0), [(-6, -10), (-22, -10), (-34, 0), (-22, 10), (-6, 10)]),
-            ("BTN_DPAD_RIGHT", QPointF(20, 0), [(6, -10), (22, -10), (34, 0), (22, 10), (6, 10)]),
+            ("BTN_DPAD_UP", "↑", QPointF(0, -20), [(-10, -6), (-10, -22), (0, -34), (10, -22), (10, -6)]),
+            ("BTN_DPAD_DOWN", "↓", QPointF(0, 20), [(-10, 6), (-10, 22), (0, 34), (10, 22), (10, 6)]),
+            ("BTN_DPAD_LEFT", "←", QPointF(-20, 0), [(-6, -10), (-22, -10), (-34, 0), (-22, 10), (-6, 10)]),
+            ("BTN_DPAD_RIGHT", "→", QPointF(20, 0), [(6, -10), (22, -10), (34, 0), (22, 10), (6, 10)]),
         ]
-        for code, _off, shape in arms:
+        for code, arrow, mid, shape in arms:
             poly = QPolygonF([origin + QPointF(x, y) for x, y in shape])
             p.setPen(QPen(self._c_highlight if code in self._pressed else self._c_button, 1.0))
             p.setBrush(self._btn_color(code))
             p.drawPolygon(poly)
+            self._draw_legend(
+                p, QRectF(origin.x() + mid.x() - 14, origin.y() + mid.y() - 9, 28, 18),
+                code, arrow, base_px=11,
+            )
         # Outline diamond
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(self._c_outline, 1.4))
@@ -436,28 +446,33 @@ class EdenGamepad(QWidget):
         p.drawPolygon(outline)
 
     def _draw_system(self, p: QPainter, c: QPointF) -> None:
-        # Minus / Plus
+        # Minus / Plus — remapped keys replace the glyph
         for code, pos, plus in (("BTN_SELECT", QPointF(-50, -86), False),
                                 ("BTN_START", QPointF(50, -86), True)):
             p.setPen(QPen(self._c_outline, 1.2))
             p.setBrush(self._btn_color(code))
-            p.drawEllipse(c + pos, 9, 9)
-            p.setPen(Qt.NoPen)
-            p.setBrush(self._c_font2)
-            p.drawRect(QRectF(c.x() + pos.x() - 4.5, c.y() + pos.y() - 1.2, 9, 2.4))
-            if plus:
-                p.drawRect(QRectF(c.x() + pos.x() - 1.2, c.y() + pos.y() - 4.5, 2.4, 9))
+            p.drawEllipse(c + pos, 11, 11)
+            remapped = bool(self._maps.get(code)) and code != self._armed
+            if remapped:
+                self._draw_legend(
+                    p, QRectF(c.x() + pos.x() - 14, c.y() + pos.y() - 8, 28, 16),
+                    code, "+" if plus else "−", base_px=10,
+                )
+            else:
+                p.setPen(Qt.NoPen)
+                p.setBrush(self._c_font2)
+                p.drawRect(QRectF(c.x() + pos.x() - 4.5, c.y() + pos.y() - 1.2, 9, 2.4))
+                if plus:
+                    p.drawRect(QRectF(c.x() + pos.x() - 1.2, c.y() + pos.y() - 4.5, 2.4, 9))
         # Home / guide
         p.setPen(QPen(self._c_outline, 1.2))
         p.setBrush(self._btn_color("BTN_MODE"))
-        p.drawEllipse(c + QPointF(29, -56), 10, 10)
-        p.setBrush(self._c_button2)
-        p.drawEllipse(c + QPointF(29, -56), 7, 7)
-        label = self._style.guide_label
-        if label:
-            p.setPen(self._c_font2)
-            font = QFont(p.font())
-            font.setPixelSize(7)
-            font.setBold(True)
-            p.setFont(font)
-            p.drawText(QRectF(c.x() + 15, c.y() - 64, 28, 16), Qt.AlignCenter, label[:4])
+        p.drawEllipse(c + QPointF(29, -56), 11, 11)
+        label = self._style.guide_label or "●"
+        remapped = bool(self._maps.get("BTN_MODE")) and self._armed != "BTN_MODE"
+        if not remapped:
+            p.setBrush(self._c_button2)
+            p.drawEllipse(c + QPointF(29, -56), 7, 7)
+        self._draw_legend(
+            p, QRectF(c.x() + 13, c.y() - 66, 32, 20), "BTN_MODE", label, base_px=10,
+        )

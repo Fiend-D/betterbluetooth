@@ -72,6 +72,7 @@ class InputPage(QWidget):
         self._reload_presets()
 
         self._hint = label("打开本页后直接按实体键即可测试高亮；点映射框后再按目标键完成改建。", "secondary", wrap=True)
+        self._hint.setMinimumHeight(36)
         root.addWidget(self._hint)
 
         self.visuals = QStackedWidget()
@@ -248,10 +249,11 @@ class InputPage(QWidget):
             if not self._profile.enabled:
                 msg += "（请打开上方「启用映射」后才会在系统中生效）"
             self._hint.setText(msg)
-            self.ctl.flyout.toast(msg, "success", 3500)
+            # Overlay toast — must not reflow the page (avoids the upward jump).
+            self.ctl.flyout.toast(msg, "success", 2500)
         else:
             self._hint.setText(f"已禁用：{code_label(src)}")
-            self.ctl.flyout.toast(f"已禁用 {code_label(src)}", "info", 2500)
+            self.ctl.flyout.toast(f"已禁用 {code_label(src)}", "info", 2000)
 
     def _toggle_enable(self, on: bool) -> None:
         if not self._profile:
