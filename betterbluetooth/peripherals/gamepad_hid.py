@@ -169,11 +169,19 @@ def _xinput_batteries() -> list[Device]:
 
 
 def scan_gamepads(state: dict) -> list[Device]:
+    from ..debuglog import log
+
     result: list[Device] = []
     seen: set[bytes] = set()
     counter = int(state.get("counter", 0))
+    try:
+        entries = list(hid.enumerate(0, 0))
+    except Exception as e:  # noqa: BLE001
+        log("hid", f"enumerate failed: {e}")
+        entries = []
+    log("hid", f"enumerate={len(entries)} known_scan…")
 
-    for entry in hid.enumerate(0, 0):
+    for entry in entries:
         vid = entry.get("vendor_id", 0)
         pid = entry.get("product_id", 0)
         path = entry["path"]
@@ -185,12 +193,14 @@ def scan_gamepads(state: dict) -> list[Device]:
         elif vid == SONY and pid in SONY_PRODUCTS:
             family = "sony"
             name = SONY_PRODUCTS[pid]
-        elif vid == MICROSOFT and pid in XBOX_PRODUCTS:
+        elif vid == MICROSOFT and (pid in XBOX_PRODUCTS or (pid & 0xFF00) in (0x0200, 0x0B00)):
             family = "xbox"
-            name = XBOX_PRODUCTS[pid]
+            name = XBOX_PRODUCTS.get(pid, entry.get("product_string") or "Xbox Wireless Controller")
         else:
             continue
         seen.add(path)
+        log("hid", f"match vid={vid:04x} pid={pid:04x} family={family} "
+            f"product={entry.get('product_string')!r} serial={entry.get('serial_number')!r}")
 
         product = (entry.get("product_string") or name or "").strip() or name
         serial = entry.get("serial_number") or ""

@@ -118,7 +118,21 @@ class BackendWorker(QObject):
             except Exception:
                 traceback.print_exc()
         diagnostics = self.backend.diagnostics(devices)
-        self.devicesChanged.emit(merge(devices, peripherals))
+        merged = merge(devices, peripherals)
+        try:
+            from .debuglog import log
+            from .models import DeviceKind
+            pads = [d for d in merged if d.kind == DeviceKind.GAMEPAD]
+            if pads or peripherals:
+                log("battery", "bt=" + ", ".join(
+                    f"{d.name}:{d.battery}" for d in devices if d.connected)[:400])
+                log("battery", "periph=" + ", ".join(
+                    f"{p.name}:{p.battery}/{p.extra.get('via')}" for p in peripherals)[:400])
+                log("battery", "merged_pads=" + ", ".join(
+                    f"{d.name}:{d.battery}" for d in pads)[:400])
+        except Exception:
+            pass
+        self.devicesChanged.emit(merged)
         self.diagnosticsChanged.emit(diagnostics)
 
     # ---- called from the GUI thread ----

@@ -3,25 +3,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPen
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
 from PySide6.QtWidgets import QLabel, QSizePolicy, QWidget
 
 from .gamepad_styles import GamepadStyle, detect_gamepad_style
 from .keyboard_styles import KeyboardStyle, detect_style
 
 
-# ---- Gamepad: painted body matching keyboard keycap quality ----
+# ---- Gamepad: sculpted shell + keycap-quality controls ----
 
 @dataclass
 class _PadBtn:
     code: str
     label: str
-    x: float  # unit coords relative to body origin
+    x: float
     y: float
     w: float = 1.0
     h: float = 1.0
-    kind: str = "circle"  # circle | round | pill | dpad | stick
+    kind: str = "circle"  # circle | pill | dpad | stick | guide
+    face_ix: int = -1     # 0..3 for north/west/east/south color
 
 
 _JC_ALIAS = {
@@ -35,69 +36,83 @@ _JC_ALIAS = {
 
 
 def _build_pad_layout(style: GamepadStyle) -> list[_PadBtn]:
-    """Build clickable controls in unit space (body ~14×8, shoulders above)."""
+    """Click targets in unit space. Shell is painted separately as a real pad silhouette."""
     st = style
     n, w, e, s = st.face_labels
     nc, wc, ec, sc = st.face_codes
-    btns: list[_PadBtn] = []
-
-    # Shoulders / triggers
-    btns += [
-        _PadBtn("BTN_TL2", st.shoulder_l2, 0.4, 0.15, 2.2, 0.7, "pill"),
-        _PadBtn("BTN_TL", st.shoulder_l, 0.6, 0.95, 2.0, 0.65, "pill"),
-        _PadBtn("BTN_TR2", st.shoulder_r2, 11.4, 0.15, 2.2, 0.7, "pill"),
-        _PadBtn("BTN_TR", st.shoulder_r, 11.4, 0.95, 2.0, 0.65, "pill"),
-    ]
-
     layout = st.layout
-    # Left cluster: Xbox / Switch put stick high + dpad low; PS puts dpad high + stick low.
+
+    # Shoulders sit on the shell top ledge (not floating far above).
+    btns: list[_PadBtn] = [
+        _PadBtn("BTN_TL2", st.shoulder_l2, 1.15, 0.55, 2.35, 0.62, "pill"),
+        _PadBtn("BTN_TL", st.shoulder_l, 1.35, 1.22, 2.15, 0.58, "pill"),
+        _PadBtn("BTN_TR2", st.shoulder_r2, 10.5, 0.55, 2.35, 0.62, "pill"),
+        _PadBtn("BTN_TR", st.shoulder_r, 10.5, 1.22, 2.15, 0.58, "pill"),
+    ]
+
     if layout == "playstation":
-        dpad_cx, dpad_cy = 3.2, 3.55
-        lstick_cx, lstick_cy = 3.2, 6.1
-        rstick_cx, rstick_cy = 8.4, 6.1
-        face_cx, face_cy = 10.8, 3.9
+        dpad_cx, dpad_cy = 3.35, 3.55
+        lstick_cx, lstick_cy = 3.55, 6.35
+        rstick_cx, rstick_cy = 8.55, 6.35
+        face_cx, face_cy = 10.65, 3.85
     else:
-        # xbox / switch / generic / 8bitdo
-        lstick_cx, lstick_cy = 3.1, 3.5
-        dpad_cx, dpad_cy = 3.1, 6.15
-        rstick_cx, rstick_cy = 8.5, 6.15
-        face_cx, face_cy = 10.9, 3.7
+        lstick_cx, lstick_cy = 3.35, 3.65
+        dpad_cx, dpad_cy = 3.55, 6.45
+        rstick_cx, rstick_cy = 8.55, 6.35
+        face_cx, face_cy = 10.65, 3.75
 
-    # D-pad cross (four hit targets)
-    d = 0.78
+    arm = 0.72
     btns += [
-        _PadBtn("BTN_DPAD_UP", "↑", dpad_cx - d / 2, dpad_cy - 1.35, d, d, "dpad"),
-        _PadBtn("BTN_DPAD_DOWN", "↓", dpad_cx - d / 2, dpad_cy + 0.55, d, d, "dpad"),
-        _PadBtn("BTN_DPAD_LEFT", "←", dpad_cx - 1.35, dpad_cy - d / 2, d, d, "dpad"),
-        _PadBtn("BTN_DPAD_RIGHT", "→", dpad_cx + 0.55, dpad_cy - d / 2, d, d, "dpad"),
+        _PadBtn("BTN_DPAD_UP", "↑", dpad_cx - arm / 2, dpad_cy - 1.22, arm, arm, "dpad"),
+        _PadBtn("BTN_DPAD_DOWN", "↓", dpad_cx - arm / 2, dpad_cy + 0.50, arm, arm, "dpad"),
+        _PadBtn("BTN_DPAD_LEFT", "←", dpad_cx - 1.22, dpad_cy - arm / 2, arm, arm, "dpad"),
+        _PadBtn("BTN_DPAD_RIGHT", "→", dpad_cx + 0.50, dpad_cy - arm / 2, arm, arm, "dpad"),
     ]
-
-    # Sticks (click = L3/R3)
+    sw = 2.05
     btns += [
-        _PadBtn("BTN_THUMBL", "L3", lstick_cx - 1.05, lstick_cy - 1.05, 2.1, 2.1, "stick"),
-        _PadBtn("BTN_THUMBR", "R3", rstick_cx - 1.05, rstick_cy - 1.05, 2.1, 2.1, "stick"),
+        _PadBtn("BTN_THUMBL", "L3", lstick_cx - sw / 2, lstick_cy - sw / 2, sw, sw, "stick"),
+        _PadBtn("BTN_THUMBR", "R3", rstick_cx - sw / 2, rstick_cy - sw / 2, sw, sw, "stick"),
     ]
-
-    # Face diamond
-    fr = 0.95
+    fr = 0.92
     btns += [
-        _PadBtn(nc, n, face_cx - fr / 2, face_cy - 1.55, fr, fr, "circle"),
-        _PadBtn(wc, w, face_cx - 1.55, face_cy - fr / 2, fr, fr, "circle"),
-        _PadBtn(ec, e, face_cx + 0.55, face_cy - fr / 2, fr, fr, "circle"),
-        _PadBtn(sc, s, face_cx - fr / 2, face_cy + 0.55, fr, fr, "circle"),
+        _PadBtn(nc, n, face_cx - fr / 2, face_cy - 1.48, fr, fr, "circle", 0),
+        _PadBtn(wc, w, face_cx - 1.48, face_cy - fr / 2, fr, fr, "circle", 1),
+        _PadBtn(ec, e, face_cx + 0.56, face_cy - fr / 2, fr, fr, "circle", 2),
+        _PadBtn(sc, s, face_cx - fr / 2, face_cy + 0.56, fr, fr, "circle", 3),
     ]
-
-    # System cluster
     btns += [
-        _PadBtn("BTN_SELECT", st.select_label, 5.4, 3.35, 1.35, 0.55, "pill"),
-        _PadBtn("BTN_START", st.start_label, 7.25, 3.35, 1.35, 0.55, "pill"),
-        _PadBtn("BTN_MODE", st.guide_label, 6.35, 4.35, 1.3, 1.3, "circle"),
+        _PadBtn("BTN_SELECT", st.select_label, 5.55, 3.55, 1.2, 0.48, "pill"),
+        _PadBtn("BTN_START", st.start_label, 7.25, 3.55, 1.2, 0.48, "pill"),
+        _PadBtn("BTN_MODE", st.guide_label or "●", 6.45, 4.45, 1.1, 1.1, "guide"),
     ]
     return btns
 
 
 _PAD_UNIT_W = 14.0
-_PAD_UNIT_H = 8.4
+_PAD_UNIT_H = 8.6
+
+
+def _shell_path(ox: float, oy: float, unit: float) -> QPainterPath:
+    """Controller silhouette: wide top, flared grips, slight waist."""
+    # Unit bounding box roughly (0.2, 1.35) → (13.8, 8.35)
+    l, t = ox + unit * 0.25, oy + unit * 1.35
+    r, b = ox + unit * 13.75, oy + unit * 8.35
+    w, h = r - l, b - t
+    path = QPainterPath()
+    # Top ledge (where shoulders sit)
+    path.moveTo(l + w * 0.18, t + h * 0.02)
+    path.cubicTo(l + w * 0.28, t - h * 0.02, l + w * 0.72, t - h * 0.02, l + w * 0.82, t + h * 0.02)
+    # Right shoulder corner → right grip
+    path.cubicTo(l + w * 0.96, t + h * 0.08, l + w * 1.02, t + h * 0.28, l + w * 0.98, t + h * 0.48)
+    path.cubicTo(l + w * 0.96, t + h * 0.72, l + w * 0.92, t + h * 0.95, l + w * 0.78, b)
+    # Bottom between grips (inward waist)
+    path.cubicTo(l + w * 0.68, b - h * 0.06, l + w * 0.58, b - h * 0.14, l + w * 0.50, b - h * 0.16)
+    path.cubicTo(l + w * 0.42, b - h * 0.14, l + w * 0.32, b - h * 0.06, l + w * 0.22, b)
+    # Left grip → left shoulder
+    path.cubicTo(l + w * 0.08, t + h * 0.95, l + w * 0.04, t + h * 0.72, l + w * 0.02, t + h * 0.48)
+    path.cubicTo(l - w * 0.02, t + h * 0.28, l + w * 0.04, t + h * 0.08, l + w * 0.18, t + h * 0.02)
+    path.closeSubpath()
+    return path
 
 
 class VisualGamepad(QWidget):
@@ -109,7 +124,7 @@ class VisualGamepad(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setMinimumHeight(300)
+        self.setMinimumHeight(320)
         self.setMouseTracking(True)
         self.setCursor(Qt.PointingHandCursor)
         self._style: GamepadStyle = detect_gamepad_style(None)
@@ -144,10 +159,10 @@ class VisualGamepad(QWidget):
 
     def _layout_metrics(self) -> tuple[float, float, float]:
         tip_h = 24
-        pad = 8
+        pad = 6
         avail_w = max(1.0, self.width() - pad * 2)
         avail_h = max(1.0, self.height() - tip_h - pad * 2)
-        unit = min(avail_w / (_PAD_UNIT_W + 0.6), avail_h / (_PAD_UNIT_H + 0.5))
+        unit = min(avail_w / (_PAD_UNIT_W + 0.4), avail_h / (_PAD_UNIT_H + 0.3))
         board_w = unit * _PAD_UNIT_W
         board_h = unit * _PAD_UNIT_H
         ox = (self.width() - board_w) / 2
@@ -164,11 +179,7 @@ class VisualGamepad(QWidget):
 
     def _hit(self, pos) -> str | None:
         ox, oy, unit = self._layout_metrics()
-        # Prefer smaller / face buttons over stick wells when overlapping.
-        hits = []
-        for btn in self._buttons:
-            if self._btn_rect(btn, ox, oy, unit).contains(pos):
-                hits.append(btn)
+        hits = [b for b in self._buttons if self._btn_rect(b, ox, oy, unit).contains(pos)]
         if not hits:
             return None
         hits.sort(key=lambda b: b.w * b.h)
@@ -239,50 +250,192 @@ class VisualGamepad(QWidget):
         painter.setRenderHint(QPainter.TextAntialiasing)
         ox, oy, unit = self._layout_metrics()
 
-        body = QRectF(ox + unit * 0.15, oy + unit * 1.55,
-                      unit * (_PAD_UNIT_W - 0.3), unit * 6.5)
-        case_grad = QLinearGradient(body.topLeft(), body.bottomLeft())
-        case_grad.setColorAt(0.0, QColor(st.plate))
-        case_grad.setColorAt(1.0, QColor(st.case))
-        painter.setPen(QPen(QColor(st.case_edge), 1.6))
-        painter.setBrush(case_grad)
-        painter.drawRoundedRect(body, unit * 1.35, unit * 1.35)
-
-        # Grip cutouts (subtle)
-        grip = QColor(st.case_edge)
-        grip.setAlpha(55)
+        shell = _shell_path(ox, oy, unit)
+        # Drop shadow
+        shadow = QPainterPath(shell)
+        shadow.translate(0, unit * 0.08)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(grip)
-        painter.drawEllipse(QRectF(body.left() - unit * 0.15, body.bottom() - unit * 2.2, unit * 2.4, unit * 2.6))
-        painter.drawEllipse(QRectF(body.right() - unit * 2.25, body.bottom() - unit * 2.2, unit * 2.4, unit * 2.6))
+        sh = QColor(0, 0, 0, 55)
+        painter.setBrush(sh)
+        painter.drawPath(shadow)
+
+        # Shell body with vertical bevel
+        bounds = shell.boundingRect()
+        case_grad = QLinearGradient(bounds.topLeft(), bounds.bottomLeft())
+        case_grad.setColorAt(0.0, QColor(st.gloss))
+        case_grad.setColorAt(0.18, QColor(st.plate))
+        case_grad.setColorAt(1.0, QColor(st.case))
+        painter.setBrush(case_grad)
+        painter.setPen(QPen(QColor(st.case_edge), 1.8))
+        painter.drawPath(shell)
+
+        # Soft top-plate sheen
+        sheen = QLinearGradient(bounds.left(), bounds.top(), bounds.left(), bounds.top() + unit * 1.8)
+        c0 = QColor(255, 255, 255, 28)
+        c1 = QColor(255, 255, 255, 0)
+        sheen.setColorAt(0.0, c0)
+        sheen.setColorAt(1.0, c1)
+        painter.setBrush(sheen)
+        painter.setPen(Qt.NoPen)
+        painter.drawPath(shell)
+
+        # Unified d-pad base (single cross under the four hit targets)
+        dpad_btns = [b for b in self._buttons if b.kind == "dpad"]
+        if dpad_btns:
+            xs = [self._btn_rect(b, ox, oy, unit) for b in dpad_btns]
+            cx = sum(r.center().x() for r in xs) / 4
+            cy = sum(r.center().y() for r in xs) / 4
+            arm = xs[0].width()
+            self._paint_dpad_base(painter, cx, cy, arm, unit, st)
 
         if st.brand_mark or self._brand_label:
             painter.setPen(QColor(st.accent))
             font = QFont(painter.font())
-            font.setPixelSize(max(8, int(unit * 0.28)))
+            font.setPixelSize(max(8, int(unit * 0.26)))
             font.setBold(True)
-            font.setLetterSpacing(QFont.AbsoluteSpacing, 1.0)
+            font.setLetterSpacing(QFont.AbsoluteSpacing, 1.1)
             painter.setFont(font)
             painter.drawText(
-                QRectF(body.left() + unit * 0.4, body.bottom() - unit * 0.55, body.width() * 0.5, unit * 0.4),
+                QRectF(bounds.left() + unit * 0.55, bounds.bottom() - unit * 0.85,
+                       bounds.width() * 0.4, unit * 0.4),
                 Qt.AlignLeft | Qt.AlignVCenter, st.brand_mark or self._brand_label,
             )
 
         for btn in self._buttons:
-            self._paint_btn(painter, btn, ox, oy, unit, st)
+            if btn.kind == "dpad":
+                self._paint_dpad_arm(painter, btn, ox, oy, unit, st)
+            elif btn.kind == "stick":
+                self._paint_stick(painter, btn, ox, oy, unit, st)
+            else:
+                self._paint_btn(painter, btn, ox, oy, unit, st)
+
+    def _paint_dpad_base(self, painter: QPainter, cx: float, cy: float, arm: float,
+                         unit: float, st: GamepadStyle) -> None:
+        thick = arm * 0.98
+        span = arm * 2.55
+        path = QPainterPath()
+        # Vertical bar
+        path.addRoundedRect(QRectF(cx - thick / 2, cy - span / 2, thick, span), unit * 0.12, unit * 0.12)
+        # Horizontal bar
+        path.addRoundedRect(QRectF(cx - span / 2, cy - thick / 2, span, thick), unit * 0.12, unit * 0.12)
+        side = QColor(st.button_side)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(side)
+        painter.drawPath(path)
+        face = QRectF(cx - span / 2 + unit * 0.04, cy - span / 2 + unit * 0.03,
+                      span - unit * 0.08, span - unit * 0.12)
+        # Clip-ish: redraw slightly inset cross for the face
+        inset = QPainterPath()
+        t2, s2 = thick - unit * 0.1, span - unit * 0.12
+        inset.addRoundedRect(QRectF(cx - t2 / 2, cy - s2 / 2, t2, s2), unit * 0.1, unit * 0.1)
+        inset.addRoundedRect(QRectF(cx - s2 / 2, cy - t2 / 2, s2, t2), unit * 0.1, unit * 0.1)
+        grad = QLinearGradient(QPointF(cx, cy - s2 / 2), QPointF(cx, cy + s2 / 2))
+        grad.setColorAt(0.0, QColor(st.dpad_top))
+        grad.setColorAt(1.0, QColor(st.dpad))
+        painter.setBrush(grad)
+        painter.setPen(QPen(QColor(st.case_edge), 0.8))
+        painter.drawPath(inset)
+
+    def _paint_dpad_arm(self, painter: QPainter, btn: _PadBtn, ox: float, oy: float,
+                        unit: float, st: GamepadStyle) -> None:
+        rect = self._btn_rect(btn, ox, oy, unit)
+        pressed = btn.code in self._pressed
+        armed = btn.code == self._armed
+        hover = btn.code == self._hover
+        bound = self._maps.get(btn.code, "")
+        if pressed or armed or hover:
+            col = QColor(st.armed if armed else (st.pressed if pressed else st.accent))
+            col.setAlpha(70 if hover and not pressed and not armed else 140)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(col)
+            painter.drawRoundedRect(rect.adjusted(unit * 0.05, unit * 0.05, -unit * 0.05, -unit * 0.05),
+                                    unit * 0.1, unit * 0.1)
+        legend = QColor("#111111" if armed else st.legend)
+        if QColor(st.dpad_top).lightness() < 140 and not armed:
+            legend = QColor(st.legend)
+        painter.setPen(legend)
+        font = QFont(painter.font())
+        font.setPixelSize(max(8, int(unit * 0.32)))
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(rect, Qt.AlignCenter, btn.label if not bound else bound[:4])
+        if armed:
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor(st.armed), 2.4))
+            painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), unit * 0.1, unit * 0.1)
+
+    def _paint_stick(self, painter: QPainter, btn: _PadBtn, ox: float, oy: float,
+                     unit: float, st: GamepadStyle) -> None:
+        rect = self._btn_rect(btn, ox, oy, unit)
+        pressed = btn.code in self._pressed
+        armed = btn.code == self._armed
+        bound = self._maps.get(btn.code, "")
+        # Well
+        painter.setPen(QPen(QColor(st.case_edge), 1.0))
+        painter.setBrush(QColor(st.stick_well))
+        painter.drawEllipse(rect)
+        ring = rect.adjusted(unit * 0.12, unit * 0.12, -unit * 0.12, -unit * 0.12)
+        painter.setBrush(QColor(st.stick_ring))
+        painter.drawEllipse(ring)
+        # Cap
+        is_left = btn.code == "BTN_THUMBL"
+        sx = self._lx if is_left else self._rx
+        sy = self._ly if is_left else self._ry
+        travel = unit * 0.38
+        cx = ring.center().x() + sx * travel
+        cy = ring.center().y() + sy * travel
+        cap_r = unit * 0.55
+        cap = QRectF(cx - cap_r, cy - cap_r, cap_r * 2, cap_r * 2)
+        side = QColor(st.button_side)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(side)
+        painter.drawEllipse(cap.adjusted(unit * 0.02, unit * 0.04, -unit * 0.02, unit * 0.02))
+        face = cap.adjusted(unit * 0.06, unit * 0.04, -unit * 0.06, -unit * 0.10)
+        if pressed:
+            face.translate(0, unit * 0.03)
+        grad = QRadialGradient(face.center(), face.width() / 2)
+        top = QColor(st.pressed if pressed else st.stick_cap).lighter(118)
+        bot = QColor(st.pressed if pressed else st.stick_cap)
+        grad.setColorAt(0.0, top)
+        grad.setColorAt(1.0, bot)
+        painter.setBrush(grad)
+        painter.setPen(QPen(QColor(st.armed if armed else st.case_edge), 2.0 if armed else 0.9))
+        painter.drawEllipse(face)
+        # Dimple
+        dim = QRectF(face.center().x() - unit * 0.12, face.center().y() - unit * 0.12,
+                     unit * 0.24, unit * 0.24)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(st.accent if pressed or armed else st.legend_dim))
+        painter.drawEllipse(dim)
+        painter.setPen(QColor(st.legend_dim))
+        font = QFont(painter.font())
+        font.setPixelSize(max(7, int(unit * 0.20)))
+        painter.setFont(font)
+        painter.drawText(QRectF(rect.left(), rect.bottom() - unit * 0.35, rect.width(), unit * 0.32),
+                         Qt.AlignCenter, bound[:5] if bound and not armed else btn.label)
+        if armed:
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor(st.armed), 2.6))
+            painter.drawEllipse(rect.adjusted(-1, -1, 1, 1))
 
     def _paint_btn(self, painter: QPainter, btn: _PadBtn, ox: float, oy: float,
                    unit: float, st: GamepadStyle) -> None:
         rect = self._btn_rect(btn, ox, oy, unit)
-        code = btn.code
-        pressed = code in self._pressed
-        armed = code == self._armed
-        hover = code == self._hover
-        bound = self._maps.get(code, "")
+        pressed = btn.code in self._pressed
+        armed = btn.code == self._armed
+        hover = btn.code == self._hover
+        bound = self._maps.get(btn.code, "")
+
+        face_accent = ""
+        if btn.face_ix >= 0 and btn.face_ix < len(st.face_colors):
+            face_accent = st.face_colors[btn.face_ix]
 
         side = QColor(st.button_side)
         face = QColor(st.button_top)
         body = QColor(st.button)
+        if face_accent and btn.kind in ("circle", "guide") and not armed and not pressed:
+            # Keep dark/light shell, tint legend via accent ring instead of filling whole button.
+            pass
         if armed:
             face = QColor(st.armed)
             body = QColor(st.armed).darker(125)
@@ -291,94 +444,60 @@ class VisualGamepad(QWidget):
             face = QColor(st.pressed)
             body = QColor(st.pressed).darker(115)
             side = QColor(st.pressed).darker(140)
-        elif bound:
-            tint = QColor(st.accent)
-            face = QColor(
-                min(255, face.red() + tint.red() // 8),
-                min(255, face.green() + tint.green() // 8),
-                min(255, face.blue() + tint.blue() // 8),
-            )
         elif hover:
             face = QColor(face).lighter(110)
 
         painter.setPen(Qt.NoPen)
         painter.setBrush(side)
-        if btn.kind in ("circle", "stick"):
+        roundish = btn.kind in ("circle", "guide")
+        if roundish:
             painter.drawEllipse(rect)
-            face_rect = rect.adjusted(unit * 0.06, unit * 0.05, -unit * 0.06, -unit * 0.12)
-            if pressed and not armed:
-                face_rect.translate(0, unit * 0.04)
-            if btn.kind == "stick":
-                # Outer well
-                painter.setBrush(QColor(st.stick_well))
-                painter.drawEllipse(rect)
-                well = rect.adjusted(unit * 0.18, unit * 0.18, -unit * 0.18, -unit * 0.18)
-                painter.setBrush(QColor(st.stick_cap))
-                painter.drawEllipse(well)
-                # Live stick indicator
-                is_left = code == "BTN_THUMBL"
-                sx = self._lx if is_left else self._rx
-                sy = self._ly if is_left else self._ry
-                cx = well.center().x() + sx * unit * 0.35
-                cy = well.center().y() + sy * unit * 0.35
-                painter.setBrush(QColor(st.accent if pressed else st.pressed))
-                painter.drawEllipse(QRectF(cx - unit * 0.18, cy - unit * 0.18, unit * 0.36, unit * 0.36))
-                legend = QColor(st.legend_dim)
-                painter.setPen(legend)
-                font = QFont(painter.font())
-                font.setPixelSize(max(7, int(unit * 0.22)))
-                painter.setFont(font)
-                painter.drawText(rect, Qt.AlignHCenter | Qt.AlignBottom, btn.label)
-                if bound and not armed:
-                    painter.setPen(QColor(st.accent))
-                    font.setBold(True)
-                    font.setPixelSize(max(8, int(unit * 0.26)))
-                    painter.setFont(font)
-                    painter.drawText(rect.adjusted(0, unit * 0.15, 0, 0), Qt.AlignHCenter | Qt.AlignTop, bound[:6])
-                if armed:
-                    painter.setBrush(Qt.NoBrush)
-                    glow = QColor(st.armed)
-                    glow.setAlpha(180)
-                    painter.setPen(QPen(glow, 3.0))
-                    painter.drawEllipse(rect.adjusted(-1.5, -1.5, 1.5, 1.5))
-                return
-            grad = QLinearGradient(face_rect.topLeft(), face_rect.bottomLeft())
-            grad.setColorAt(0.0, face)
-            grad.setColorAt(1.0, body)
-            painter.setBrush(grad)
-            painter.setPen(QPen(QColor(st.armed if armed else st.case_edge), 2.2 if armed else 0.8))
-            painter.drawEllipse(face_rect)
+            face_rect = rect.adjusted(unit * 0.07, unit * 0.05, -unit * 0.07, -unit * 0.12)
         else:
-            radius = max(2.0, unit * (0.28 if btn.kind == "pill" else 0.18))
+            radius = max(2.0, unit * 0.26)
             painter.drawRoundedRect(rect, radius, radius)
             face_rect = rect.adjusted(unit * 0.04, unit * 0.03, -unit * 0.04, -unit * 0.10)
-            if pressed and not armed:
-                face_rect.translate(0, unit * 0.03)
-            grad = QLinearGradient(face_rect.topLeft(), face_rect.bottomLeft())
-            grad.setColorAt(0.0, face)
-            grad.setColorAt(1.0, body)
-            painter.setBrush(grad)
-            painter.setPen(QPen(QColor(st.armed if armed else st.case_edge), 2.2 if armed else 0.8))
+        if pressed and not armed:
+            face_rect.translate(0, unit * 0.035)
+
+        grad = QLinearGradient(face_rect.topLeft(), face_rect.bottomLeft())
+        grad.setColorAt(0.0, face)
+        grad.setColorAt(1.0, body)
+        painter.setBrush(grad)
+        painter.setPen(QPen(QColor(st.armed if armed else st.case_edge), 2.2 if armed else 0.85))
+        if roundish:
+            painter.drawEllipse(face_rect)
+            if face_accent and not armed:
+                ring = QColor(face_accent)
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(ring, max(1.6, unit * 0.07)))
+                painter.drawEllipse(face_rect.adjusted(unit * 0.06, unit * 0.06, -unit * 0.06, -unit * 0.06))
+        else:
+            radius = max(2.0, unit * 0.22)
             painter.drawRoundedRect(face_rect, radius * 0.85, radius * 0.85)
 
-        legend = QColor(st.legend)
-        if armed:
-            legend = QColor("#111111")
-        elif pressed:
-            legend = QColor("#FFFFFF") if QColor(st.pressed).lightness() < 160 else QColor("#111111")
+        # Legend
+        if face_accent and not armed and not pressed:
+            legend = QColor(face_accent)
+        else:
+            legend = QColor(st.legend)
+            if armed:
+                legend = QColor("#111111")
+            elif pressed:
+                legend = QColor("#FFFFFF") if QColor(st.pressed).lightness() < 160 else QColor("#111111")
         painter.setPen(legend)
         font = QFont(painter.font())
         text_rect = face_rect.adjusted(1, 1, -1, -1)
         if bound and not armed:
-            font.setPixelSize(max(6, int(unit * 0.20)))
+            font.setPixelSize(max(6, int(unit * 0.18)))
             font.setBold(False)
             painter.setFont(font)
             painter.setPen(QColor(st.legend_dim))
             painter.drawText(
-                QRectF(text_rect.left(), text_rect.top(), text_rect.width(), text_rect.height() * 0.42),
-                Qt.AlignHCenter | Qt.AlignBottom, btn.label,
+                QRectF(text_rect.left(), text_rect.top(), text_rect.width(), text_rect.height() * 0.40),
+                Qt.AlignHCenter | Qt.AlignBottom, btn.label or "·",
             )
-            font.setPixelSize(max(7, int(unit * 0.28)))
+            font.setPixelSize(max(7, int(unit * 0.26)))
             font.setBold(True)
             painter.setFont(font)
             painter.setPen(QColor(st.accent))
@@ -387,21 +506,21 @@ class VisualGamepad(QWidget):
                 Qt.AlignHCenter | Qt.AlignTop, bound[:6],
             )
         else:
-            px = max(7, int(unit * (0.36 if len(btn.label) <= 2 else 0.22)))
+            px = max(7, int(unit * (0.38 if len(btn.label) <= 2 else 0.20)))
             font.setPixelSize(px)
-            font.setBold(len(btn.label) <= 2)
+            font.setBold(True)
             painter.setFont(font)
             painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignVCenter, btn.label)
 
         if armed:
             painter.setBrush(Qt.NoBrush)
             glow = QColor(st.armed)
-            glow.setAlpha(180)
-            painter.setPen(QPen(glow, 3.0))
-            if btn.kind in ("circle", "stick"):
+            glow.setAlpha(190)
+            painter.setPen(QPen(glow, 2.8))
+            if roundish:
                 painter.drawEllipse(rect.adjusted(-1.5, -1.5, 1.5, 1.5))
             else:
-                painter.drawRoundedRect(rect.adjusted(-1.5, -1.5, 1.5, 1.5), unit * 0.2, unit * 0.2)
+                painter.drawRoundedRect(rect.adjusted(-1.5, -1.5, 1.5, 1.5), unit * 0.22, unit * 0.22)
 
 
 # ---- Keyboard: painted 108-key full layout with brand themes ----

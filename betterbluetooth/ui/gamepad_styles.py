@@ -12,6 +12,7 @@ class GamepadStyle:
     case: str
     case_edge: str
     plate: str
+    gloss: str          # top-edge highlight on shell
     button: str
     button_top: str
     button_side: str
@@ -21,12 +22,16 @@ class GamepadStyle:
     pressed: str
     armed: str
     stick_well: str
+    stick_ring: str
     stick_cap: str
+    dpad: str
+    dpad_top: str
     brand_mark: str
     # Face labels in diamond order: north, west, east, south
     face_labels: tuple[str, str, str, str]
     face_codes: tuple[str, str, str, str]
-    # Shoulder / system labels
+    # Optional per-face accent (Xbox ABXY / PS symbols); empty = use button fill
+    face_colors: tuple[str, str, str, str] = ("", "", "", "")
     shoulder_l: str = "LB"
     shoulder_l2: str = "LT"
     shoulder_r: str = "RB"
@@ -39,50 +44,57 @@ class GamepadStyle:
 STYLES: dict[str, GamepadStyle] = {
     "xbox": GamepadStyle(
         id="xbox", label="Xbox", layout="xbox",
-        case="#1A1D1A", case_edge="#0C0E0C", plate="#2A2F2A",
-        button="#2E3430", button_top="#3A423C", button_side="#1C201C",
+        case="#1C201C", case_edge="#0A0C0A", plate="#2A302A", gloss="#3A443A",
+        button="#2A302C", button_top="#384038", button_side="#161A16",
         legend="#F2F5F2", legend_dim="#8A948A",
         accent="#107C10", pressed="#3DDC84", armed="#FFB020",
-        stick_well="#141814", stick_cap="#3A423C",
+        stick_well="#0E120E", stick_ring="#1A221A", stick_cap="#2E362E",
+        dpad="#222822", dpad_top="#2E362E",
         brand_mark="XBOX",
         face_labels=("Y", "X", "B", "A"),
         face_codes=("BTN_NORTH", "BTN_WEST", "BTN_EAST", "BTN_SOUTH"),
+        face_colors=("#C8A000", "#2D6BB8", "#C43C2E", "#2E8B2E"),
         shoulder_l="LB", shoulder_l2="LT", shoulder_r="RB", shoulder_r2="RT",
-        select_label="View", start_label="Menu", guide_label="Xbox",
+        select_label="View", start_label="Menu", guide_label="",
     ),
     "switch": GamepadStyle(
         id="switch", label="Switch", layout="switch",
-        case="#2B2D31", case_edge="#15161A", plate="#3A3D44",
-        button="#E8EAEF", button_top="#F5F6FA", button_side="#C8CAD2",
+        case="#2A2C30", case_edge="#121318", plate="#3A3D44", gloss="#4A4E56",
+        button="#F0F1F5", button_top="#FAFBFE", button_side="#C4C6CE",
         legend="#1A1C22", legend_dim="#6B7080",
-        accent="#E60012", pressed="#FF5A5A", armed="#FFB020",
-        stick_well="#1A1C22", stick_cap="#4A4E58",
+        accent="#E60012", pressed="#FF6A6A", armed="#FFB020",
+        stick_well="#16181C", stick_ring="#22252A", stick_cap="#3A3E46",
+        dpad="#E8EAEF", dpad_top="#F5F6FA",
         brand_mark="NINTENDO",
         face_labels=("X", "Y", "A", "B"),
         face_codes=("BTN_NORTH", "BTN_WEST", "BTN_EAST", "BTN_SOUTH"),
+        face_colors=("", "", "", ""),
         shoulder_l="L", shoulder_l2="ZL", shoulder_r="R", shoulder_r2="ZR",
-        select_label="−", start_label="+", guide_label="Home",
+        select_label="−", start_label="+", guide_label="⌂",
     ),
     "playstation": GamepadStyle(
         id="playstation", label="PlayStation", layout="playstation",
-        case="#1C1C1E", case_edge="#0A0A0C", plate="#2C2C30",
-        button="#2A2A2E", button_top="#36363C", button_side="#18181C",
+        case="#1A1A1C", case_edge="#08080A", plate="#2A2A2E", gloss="#3A3A40",
+        button="#26262A", button_top="#323238", button_side="#141416",
         legend="#F5F5F7", legend_dim="#8E8E96",
         accent="#0070D1", pressed="#4DA3FF", armed="#FFB020",
-        stick_well="#121214", stick_cap="#3A3A40",
-        brand_mark="PlayStation",
+        stick_well="#0C0C0E", stick_ring="#1A1A1E", stick_cap="#2E2E34",
+        dpad="#222226", dpad_top="#303036",
+        brand_mark="PS",
         face_labels=("△", "□", "○", "✕"),
         face_codes=("BTN_NORTH", "BTN_WEST", "BTN_EAST", "BTN_SOUTH"),
+        face_colors=("#1FAF66", "#D46AD0", "#E85A5A", "#6AA8E8"),
         shoulder_l="L1", shoulder_l2="L2", shoulder_r="R1", shoulder_r2="R2",
         select_label="Create", start_label="Options", guide_label="PS",
     ),
     "generic": GamepadStyle(
         id="generic", label="通用手柄", layout="generic",
-        case="#2A2D32", case_edge="#1A1C20", plate="#3A3E45",
+        case="#2A2D32", case_edge="#14161A", plate="#3A3E45", gloss="#4A5058",
         button="#E8EAED", button_top="#F5F6F8", button_side="#C5C8CE",
         legend="#1F2328", legend_dim="#6B7280",
         accent="#4A9EFF", pressed="#7EC0FF", armed="#FFB020",
-        stick_well="#1A1C20", stick_cap="#4A505A",
+        stick_well="#1A1C20", stick_ring="#2A2E34", stick_cap="#4A505A",
+        dpad="#E0E2E6", dpad_top="#F0F2F5",
         brand_mark="",
         face_labels=("X", "Y", "B", "A"),
         face_codes=("BTN_NORTH", "BTN_WEST", "BTN_EAST", "BTN_SOUTH"),
@@ -91,11 +103,12 @@ STYLES: dict[str, GamepadStyle] = {
     ),
     "8bitdo": GamepadStyle(
         id="8bitdo", label="8BitDo", layout="switch",
-        case="#F0EEE8", case_edge="#B8B4A8", plate="#FAF8F2",
-        button="#2C2A26", button_top="#3A3732", button_side="#1A1814",
+        case="#E8E4DA", case_edge="#B0AA9C", plate="#F4F0E6", gloss="#FFFCF4",
+        button="#2A2824", button_top="#3A3732", button_side="#161410",
         legend="#F5F2EA", legend_dim="#A09888",
         accent="#C8102E", pressed="#F04460", armed="#E8A017",
-        stick_well="#D8D4C8", stick_cap="#4A4640",
+        stick_well="#C8C2B4", stick_ring="#D8D2C4", stick_cap="#3A3732",
+        dpad="#2A2824", dpad_top="#3A3732",
         brand_mark="8BitDo",
         face_labels=("X", "Y", "A", "B"),
         face_codes=("BTN_NORTH", "BTN_WEST", "BTN_EAST", "BTN_SOUTH"),
@@ -104,7 +117,6 @@ STYLES: dict[str, GamepadStyle] = {
     ),
 }
 
-# Longer / more specific tokens first.
 _BRAND_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("xbox", (
         "xbox", "x-box", "xinput", "microsoft xbox", "xbox wireless",
@@ -116,7 +128,7 @@ _BRAND_RULES: list[tuple[str, tuple[str, ...]]] = [
     )),
     ("switch", (
         "joy-con", "joycon", "pro controller", "nintendo", "switch pro",
-        "ns-pro", "hori",
+        "ns-pro",
     )),
     ("8bitdo", ("8bitdo", "8bit do", "ultimate bluetooth", "pro2", "sn30", "sf30")),
 ]

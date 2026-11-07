@@ -92,7 +92,8 @@ def main() -> None:
                  "--hidden-import", "betterbluetooth.peripherals.hidpp",
                  "--hidden-import", "betterbluetooth.peripherals.switch",
                  "--hidden-import", "betterbluetooth.peripherals.gamepad_hid",
-                 "--hidden-import", "betterbluetooth.inputmap.windows_hook"]
+                 "--hidden-import", "betterbluetooth.inputmap.windows_hook",
+                 "--hidden-import", "betterbluetooth.inputmap.win_gamepad"]
     else:
         args += ["--collect-submodules", "dbus_fast", "--collect-all", "evdev",
                  "--hidden-import", "betterbluetooth.backends.bluez",

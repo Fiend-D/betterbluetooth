@@ -10,6 +10,7 @@ from .base import InputBackend, InputEvent
 from .codes import PRESETS, label
 from .joycon import JoyConKeeper
 from .profile import InputProfile, InputStore, RemapRule, device_key, supports_input
+from .win_gamepad import WinGamepadPoller
 
 
 def create_backend() -> InputBackend:
@@ -45,26 +46,31 @@ class InputMapService(QObject):
         self.backend = create_backend()
         self.capability = self.backend.capability()
         self._joycon = JoyConKeeper()
+        self._xinput = WinGamepadPoller()
         self._devices: list[Device] = []
 
         self._test_key: str | None = None
         self.backend.set_callbacks(self._on_event, self._on_status)
         self._joycon.set_on_event(self._on_event)
+        self._xinput.set_on_event(self._on_event)
 
     def start(self) -> None:
         self.backend.start()
         self._joycon.start()
+        self._xinput.start()
         self.apply_profiles()
 
     def stop(self) -> None:
         self._test_key = None
         self.backend.set_test_target(None)
         self._joycon.set_test_target(None)
+        self._xinput.set_test_target(None)
         self._joycon.stop()
+        self._xinput.stop()
         self.backend.stop()
 
     def _on_event(self, event: InputEvent) -> None:
-        if not event.label:
+        if not event.label and not event.code.startswith("ABS_"):
             event.label = label(event.code)
         self.eventReceived.emit(event)
 
@@ -134,8 +140,11 @@ class InputMapService(QObject):
         self._test_key = key
         self.backend.set_test_target(key)
         self._joycon.set_test_target(key)
+        self._xinput.set_test_target(key)
         # Re-push Joy-Con targets so testing alone opens HID without keepalive.
         self.update_devices(self._devices)
+        from ..debuglog import log
+        log("input", f"test_target={key!r} xinput={'on' if key else 'off'}")
 
     def apply_preset(self, profile: InputProfile, preset_id: str) -> None:
         if preset_id.startswith("user:") or preset_id in self.store.presets:

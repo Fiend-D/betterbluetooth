@@ -10,7 +10,8 @@ from ..inputmap import PRESETS, RemapRule, label as code_label, supports_input
 from ..inputmap.base import InputEvent
 from ..inputmap.codes import qt_key_to_code
 from ..models import DeviceKind
-from .input_visuals import VisualGamepad, VisualKeyboard
+from .eden_pad import EdenGamepad
+from .input_visuals import VisualKeyboard
 from .pages import _page_header
 from .widgets import ToggleSwitch, button, label
 
@@ -75,7 +76,7 @@ class InputPage(QWidget):
 
         self.visuals = QStackedWidget()
         self.keyboard = VisualKeyboard()
-        self.gamepad = VisualGamepad()
+        self.gamepad = EdenGamepad()
         # Only bindRequested — keyPicked is the same click; connecting both
         # armed then immediately cancelled the selection.
         for board in (self.keyboard, self.gamepad):
@@ -127,6 +128,11 @@ class InputPage(QWidget):
             self.gamepad.set_device_name(dev.name)
             self._set_grab(False)
             self._hint.setText("请按手柄按键查看高亮；点示意图按键后再按目标键（可为键盘键）完成改建。")
+            from ..debuglog import log, log_path
+            log("ui", f"open pad page name={dev.name!r} addr={dev.address} bat={dev.battery}")
+            self.status.setText(
+                (svc.capability.get("message", "") + f"  · 调试日志：{log_path()}").strip(" ·")
+            )
         else:
             self.visuals.setCurrentWidget(self.keyboard)
             self.keyboard.set_device_name(dev.name)
@@ -208,11 +214,19 @@ class InputPage(QWidget):
     def _on_event(self, event: InputEvent) -> None:
         if not self._profile or event.device_key != self._profile.device_key:
             return
-        # Ignore absolute-axis spam for remap UI buttons.
+        # Stick axes from XInput poller — update dots, never treat as remap source.
         if event.code.startswith("ABS_"):
+            if self._kind == DeviceKind.GAMEPAD:
+                try:
+                    val = float(event.label or 0)
+                except ValueError:
+                    val = 0.0
+                self.gamepad.set_stick_axis(event.code, val)
             return
         if self._kind == DeviceKind.GAMEPAD:
             self.gamepad.set_button(event.code, event.pressed)
+            from ..debuglog import log
+            log("input", f"pad {event.code} {'down' if event.pressed else 'up'} key={event.device_key}")
         else:
             self.keyboard.set_key_state(event.code, event.pressed)
         if not event.pressed or not self._armed_src:
