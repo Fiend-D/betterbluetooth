@@ -26,6 +26,8 @@ for _alias in ("HCURSOR", "HICON", "HBRUSH", "HMENU"):
 WH_KEYBOARD_LL = 13
 WM_INPUT = 0x00FF
 WM_QUIT = 0x0012
+WM_APP = 0x8000
+WM_HOOK_SYNC = WM_APP + 41  # install/remove LL hook on input thread
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
 WM_SYSKEYDOWN = 0x0104
@@ -163,6 +165,7 @@ class WindowsHookBackend(InputBackend):
         self._proc = None
         self._wndproc = None
         self._hwnd = None
+        self._hinst = None
 
     def capability(self) -> dict:
         return {
@@ -196,11 +199,13 @@ class WindowsHookBackend(InputBackend):
             self._profiles = {p.device_key: p for p in profiles}
             self._master = master_enabled
         self._refresh_handle_map()
+        self._request_hook_sync()
 
     def set_test_target(self, device_key: str | None) -> None:
         with self._lock:
             self._test_target = device_key
         self._refresh_handle_map()
+        self._request_hook_sync()
 
     def _keyboard_remap_profiles(self) -> list[InputProfile]:
         with self._lock:
@@ -214,6 +219,28 @@ class WindowsHookBackend(InputBackend):
     def _sole_keyboard_remap(self) -> InputProfile | None:
         profiles = self._keyboard_remap_profiles()
         return profiles[0] if len(profiles) == 1 else None
+
+    def _hook_wanted(self) -> bool:
+        """LL hook only while remapping or testing — otherwise wired keyboards stay untouched."""
+        with self._lock:
+            if self._test_target:
+                return True
+            if not self._master:
+                return False
+            return any(
+                p.enabled and p.kind == "keyboard" and p.rules
+                for p in self._profiles.values()
+            )
+
+    def _request_hook_sync(self) -> None:
+        tid = self._thread_id
+        if tid:
+            user32.PostThreadMessageW(tid, WM_HOOK_SYNC, 0, 0)
+
+    @staticmethod
+    def _looks_bluetooth_path(name: str) -> bool:
+        u = (name or "").upper()
+        return any(tok in u for tok in ("BTHENUM", "BTHLE", "BTHHF", "BLUETOOTH", "BTH\\"))
 
     def _refresh_handle_map(self) -> None:
         count = wintypes.UINT(0)
@@ -253,12 +280,12 @@ class WindowsHookBackend(InputBackend):
                 if dname and (dname in name or name in dname):
                     matched = key
                     break
-            # Raw Input path names rarely contain the Bluetooth alias; fall back so
-            # remapping / testing still attach to a profile.
-            if matched is None and test:
-                matched = test
-            if matched is None and sole_key:
+            # Never attach a sole BT remap profile to a wired/USB keyboard path —
+            # that was swallowing the user's local keyboard while the app was open.
+            if matched is None and sole_key and self._looks_bluetooth_path(name):
                 matched = sole_key
+            if matched is None and test and self._looks_bluetooth_path(name):
+                matched = test
             if matched is not None:
                 mapping[int(entry.hDevice)] = matched
         with self._lock:
@@ -278,13 +305,15 @@ class WindowsHookBackend(InputBackend):
     def remap_runtime_status(self) -> str:
         profiles = self._keyboard_remap_profiles()
         if not profiles:
+            if self._test_target:
+                return "按键测试中（已临时安装键盘钩子）"
             if not self._master:
-                return "总开关未开启（设置 → 系统级按键映射）"
-            return "已开启总开关，但没有已启用的键盘映射规则"
+                return "总开关未开启（设置 → 系统级按键映射）；未安装键盘钩子"
+            return "已开启总开关，但没有已启用的键盘映射规则；未安装键盘钩子"
         if self._hook is None:
             return "键盘钩子未安装（无需管理员；请完全退出后重开应用）"
         if len(profiles) == 1:
-            return f"系统改键生效中：{profiles[0].name or profiles[0].device_key}（Windows 对全局键盘钩子生效）"
+            return f"系统改键生效中：{profiles[0].name or profiles[0].device_key}（仅改已识别的蓝牙键盘）"
         return f"系统改键已启用 {len(profiles)} 套方案（多键盘时依赖设备识别，可能不稳定）"
 
     def _thread_main(self) -> None:
@@ -322,18 +351,15 @@ class WindowsHookBackend(InputBackend):
         user32.SetWindowsHookExW.argtypes = [
             ctypes.c_int, LowLevelKeyboardProc, wintypes.HINSTANCE, wintypes.DWORD,
         ]
-        # WH_KEYBOARD_LL runs in this process; hMod must be NULL (PyInstaller/frozen
-        # GetModuleHandleW(None) often makes SetWindowsHookEx fail even as admin).
-        self._hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, None, 0)
-        if not self._hook:
-            self._hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, hinst, 0)
-        if not self._hook:
-            err = ctypes.get_last_error()
-            self._status(f"安装键盘钩子失败（错误 {err}；通常无需管理员，请重启应用后重试）")
-        else:
-            self._status("键盘钩子已就绪")
+        self._hinst = hinst
+        # Do NOT install WH_KEYBOARD_LL until remapping / testing needs it.
+        # A global LL hook at launch was freezing wired keyboards for some users.
+        self._apply_hook_state()
         msg = MSG()
         while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            if msg.message == WM_HOOK_SYNC:
+                self._apply_hook_state()
+                continue
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
         if self._hook:
@@ -342,6 +368,25 @@ class WindowsHookBackend(InputBackend):
         if hwnd:
             user32.DestroyWindow(hwnd)
         self._hwnd = None
+
+    def _apply_hook_state(self) -> None:
+        want = self._hook_wanted()
+        if want and not self._hook:
+            # WH_KEYBOARD_LL runs in this process; hMod must be NULL (PyInstaller/frozen
+            # GetModuleHandleW(None) often makes SetWindowsHookEx fail even as admin).
+            self._hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, None, 0)
+            if not self._hook:
+                hinst = getattr(self, "_hinst", None) or kernel32.GetModuleHandleW(None)
+                self._hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, hinst, 0)
+            if not self._hook:
+                err = ctypes.get_last_error()
+                self._status(f"安装键盘钩子失败（错误 {err}；通常无需管理员，请重启应用后重试）")
+            else:
+                self._status("键盘钩子已就绪（映射/测试中）")
+        elif not want and self._hook:
+            user32.UnhookWindowsHookEx(self._hook)
+            self._hook = None
+            self._status("键盘钩子已卸载（无活动映射）")
 
     def _window_proc(self, hwnd, msg, wparam, lparam):
         if msg == WM_INPUT:
@@ -365,67 +410,73 @@ class WindowsHookBackend(InputBackend):
         with self._lock:
             key = self._handle_key.get(handle)
             test = self._test_target
-            if key is None and test:
-                key = test
         vk = int(raw.keyboard.VKey)
         pressed = (raw.keyboard.Flags & RI_KEY_BREAK) == 0
+        # Only record correlation for handles we mapped (BT / matched). Wired
+        # keyboards must not stamp _last_raw with a remap/test profile key.
         self._last_raw = {"key": key, "vk": vk, "t": time.monotonic(), "pressed": pressed}
         if key and test == key:
             code = VK_TO_KEY.get(vk, f"VK_{vk:02X}")
             self._emit(InputEvent(key, code, pressed, code_label(code)))
 
     def _ll_keyboard(self, ncode, wparam, lparam):
-        if ncode == HC_ACTION:
-            info = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
-            if info.flags & LLKHF_INJECTED:
-                return user32.CallNextHookEx(self._hook, ncode, wparam, lparam)
-            vk = int(info.vkCode)
-            down = wparam in (WM_KEYDOWN, WM_SYSKEYDOWN)
-            up = wparam in (WM_KEYUP, WM_SYSKEYUP)
-            if not (down or up):
-                return user32.CallNextHookEx(self._hook, ncode, wparam, lparam)
+        # Any exception escaping an LL hook can swallow / freeze all keyboards.
+        try:
+            if ncode == HC_ACTION:
+                info = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+                if info.flags & LLKHF_INJECTED:
+                    return user32.CallNextHookEx(self._hook, ncode, wparam, lparam)
+                vk = int(info.vkCode)
+                down = wparam in (WM_KEYDOWN, WM_SYSKEYDOWN)
+                up = wparam in (WM_KEYUP, WM_SYSKEYUP)
+                if not (down or up):
+                    return user32.CallNextHookEx(self._hook, ncode, wparam, lparam)
 
-            last = self._last_raw
-            with self._lock:
-                test = self._test_target
+                last = self._last_raw
+                with self._lock:
+                    test = self._test_target
 
-            # UI test feedback (LL hook usually arrives before Raw Input).
-            if test:
-                recent_raw = (
-                    last.get("key") == test
+                # UI test feedback only when Raw Input already pinned the event to
+                # the test device — never attribute wired-keyboard presses to it.
+                if test:
+                    recent_raw = (
+                        last.get("key") == test
+                        and last.get("vk") == vk
+                        and time.monotonic() - float(last.get("t") or 0) < 0.08
+                    )
+                    if recent_raw:
+                        code = VK_TO_KEY.get(vk)
+                        if code:
+                            self._emit(InputEvent(test, code, down, code_label(code)))
+
+                # Remap ONLY when Raw Input correlated this key to a profile device.
+                # Do NOT fall back to "sole keyboard profile" — that remapped the
+                # wired keyboard whenever a single BT remap scheme was enabled.
+                profile = None
+                recent = (
+                    last.get("key")
                     and last.get("vk") == vk
                     and time.monotonic() - float(last.get("t") or 0) < 0.08
                 )
-                if not recent_raw:
+                if recent:
+                    profile = self._match_profile(last.get("key"))
+
+                if profile is not None:
                     code = VK_TO_KEY.get(vk)
-                    if code:
-                        self._emit(InputEvent(test, code, down, code_label(code)))
-
-            # Resolve which remap profile applies. LL hooks run BEFORE WM_INPUT is
-            # dispatched, so Raw Input correlation often misses — fall back to the
-            # sole enabled keyboard profile (common single-BT-keyboard case).
-            profile = None
-            recent = (
-                last.get("key")
-                and last.get("vk") == vk
-                and time.monotonic() - float(last.get("t") or 0) < 0.08
-            )
-            if recent:
-                profile = self._match_profile(last.get("key"))
-            if profile is None:
-                profile = self._sole_keyboard_remap()
-
-            if profile is not None:
-                code = VK_TO_KEY.get(vk)
-                rules = profile.rule_map()
-                if code and code in rules:
-                    targets = rules[code]
-                    for to in targets:
-                        tvk = KEY_TO_VK.get(to)
-                        if tvk is not None:
-                            self._send_vk(tvk, down)
-                    return 1  # swallow original (also when targets empty = disable)
-        return user32.CallNextHookEx(self._hook, ncode, wparam, lparam)
+                    rules = profile.rule_map()
+                    if code and code in rules:
+                        targets = rules[code]
+                        for to in targets:
+                            tvk = KEY_TO_VK.get(to)
+                            if tvk is not None:
+                                self._send_vk(tvk, down)
+                        return 1  # swallow original (also when targets empty = disable)
+        except Exception:
+            pass
+        try:
+            return user32.CallNextHookEx(self._hook, ncode, wparam, lparam)
+        except Exception:
+            return 0
 
     @staticmethod
     def _send_vk(vk: int, down: bool) -> None:

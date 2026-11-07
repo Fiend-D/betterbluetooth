@@ -51,6 +51,18 @@ XBOX_PRODUCTS = {
     0x0B20: "Xbox Wireless Controller",
     0x0B22: "Xbox Wireless Controller",
 }
+# PIDs used ONLY over Bluetooth (SDL usb_ids.h). WinRT TryGetBatteryReport for
+# these often returns remain=100 full=1000 → fake "10%". Never trust that ratio.
+XBOX_BT_ONLY_PIDS = frozenset({
+    0x02E0,  # Xbox One S Rev1 BT
+    0x02FD,  # Xbox One S Rev2 BT
+    0x0B05,  # Elite Series 2 BT
+    0x0B0C,  # Adaptive BT
+    0x0B13,  # Series X BLE
+    0x0B20,  # One S Rev2 BLE
+    0x0B21,  # Adaptive BLE
+    0x0B22,  # Elite Series 2 BLE
+})
 EIGHTBITDO_PRODUCTS = {
     0x6000: "8BitDo SF30 Pro", 0x6100: "8BitDo SF30 Pro",
     0x6001: "8BitDo SN30 Pro", 0x6101: "8BitDo SN30 Pro",
@@ -351,6 +363,11 @@ def _winrt_batteries() -> list[Device]:
                 else:
                     return None
             else:
+                # HaloBattery #108 / #118: Xbox BT reports remain=100 full=1000
+                # (and similar 100-step buckets) — not real milliwatt-hours.
+                if full == 1000 and rem % 100 == 0:
+                    _WINRT_CACHE.pop(addr, None)
+                    return None
                 level = int(round(max(0, min(100, (rem / full) * 100))))
                 charging = bool(battery_status_charging is not None and status == battery_status_charging)
                 _WINRT_CACHE[addr] = (now, level, charging)
@@ -436,6 +453,17 @@ def _pnp_as_devices() -> list[Device]:
     return out
 
 
+def _hid_xbox_bt_present() -> bool:
+    """True when a Microsoft pad with a Bluetooth-only product id is attached."""
+    try:
+        for entry in hid.enumerate(MICROSOFT, 0):
+            if int(entry.get("product_id") or 0) in XBOX_BT_ONLY_PIDS:
+                return True
+    except Exception:
+        return False
+    return False
+
+
 def scan_gamepads(state: dict) -> list[Device]:
     from ..debuglog import log
 
@@ -449,18 +477,23 @@ def scan_gamepads(state: dict) -> list[Device]:
     log("battery", f"pnp={len(pnp)} " + ", ".join(f"{d.name}:{d.battery}%" for d in pnp[:6]))
     result.extend(pnp)
     pnp_hit = any(d.battery is not None for d in pnp)
+    xbox_bt = _hid_xbox_bt_present()
 
-    # 1) WinRT — last resort only; synthesized capacities are coarse / wrong.
-    winrt = [] if pnp_hit else _winrt_batteries()
-    log("battery", f"winrt={len(winrt)} skipped_for_pnp={pnp_hit} "
+    # 1) WinRT — never for Xbox BT-only PIDs (fake 100/1000 → 10%).
+    winrt: list[Device] = []
+    if not pnp_hit and not xbox_bt:
+        winrt = _winrt_batteries()
+    log("battery", f"winrt={len(winrt)} skipped_for_pnp={pnp_hit} xbox_bt={xbox_bt} "
         + ", ".join(f"{d.name}:{d.battery}%" for d in winrt))
     for w in winrt:
         w.extra["battery_via"] = w.extra.get("via") or "WinRT Gamepad"
         w.extra["battery_coarse"] = True
         result.append(w)
 
-    # 2) XInput coarse buckets (empty/low/med/full) — only if nothing better.
-    xinput = [] if (pnp_hit or winrt) else _xinput_batteries()
+    # 2) XInput coarse buckets — prefer over missing/fake WinRT for Xbox BT.
+    xinput: list[Device] = []
+    if not pnp_hit and (not winrt or xbox_bt):
+        xinput = _xinput_batteries()
     log("battery", f"xinput={len(xinput)} " + ", ".join(f"{d.name}:{d.battery}%" for d in xinput))
     for xi in xinput:
         xi.extra["battery_via"] = "XInput"

@@ -85,16 +85,29 @@ def _address_from_instance_id(instance_id: str) -> str | None:
 
 
 def _read_byte_prop(devinst: int, key: DEVPROPKEY) -> int | None:
+    """Read DEVPKEY_Bluetooth_BatteryLevel (BYTE or UINT32)."""
     prop_type = wintypes.ULONG()
-    value = ctypes.c_ubyte()
-    size = wintypes.ULONG(1)
-    if _cfgmgr.CM_Get_DevNode_PropertyW(
-            devinst, ctypes.byref(key), ctypes.byref(prop_type),
-            ctypes.byref(value), ctypes.byref(size), 0) != CR_SUCCESS:
-        return None
-    if prop_type.value not in (DEVPROP_TYPE_BYTE, DEVPROP_TYPE_UINT32):
-        return None
-    return int(value.value)
+    size = wintypes.ULONG(0)
+    # Size/type probe first — a 1-byte buffer fails when the property is UINT32.
+    _cfgmgr.CM_Get_DevNode_PropertyW(
+        devinst, ctypes.byref(key), ctypes.byref(prop_type), None, ctypes.byref(size), 0)
+    if prop_type.value == DEVPROP_TYPE_BYTE:
+        value = ctypes.c_ubyte()
+        size = wintypes.ULONG(1)
+        if _cfgmgr.CM_Get_DevNode_PropertyW(
+                devinst, ctypes.byref(key), ctypes.byref(prop_type),
+                ctypes.byref(value), ctypes.byref(size), 0) != CR_SUCCESS:
+            return None
+        return int(value.value)
+    if prop_type.value == DEVPROP_TYPE_UINT32:
+        value = wintypes.ULONG()
+        size = wintypes.ULONG(4)
+        if _cfgmgr.CM_Get_DevNode_PropertyW(
+                devinst, ctypes.byref(key), ctypes.byref(prop_type),
+                ctypes.byref(value), ctypes.byref(size), 0) != CR_SUCCESS:
+            return None
+        return int(value.value)
+    return None
 
 
 def _read_string_prop(devinst: int, key: DEVPROPKEY) -> str | None:
@@ -190,12 +203,6 @@ def read_batteries_detailed() -> tuple[dict[str, int], dict[str, int]]:
             upper = instance_id.upper()
             if not upper.startswith(_BT_PREFIX):
                 continue
-            prop_type = wintypes.ULONG()
-            value = ctypes.c_ubyte()
-            data = SP_DEVINFO_DATA()
-            data.cbSize = ctypes.sizeof(SP_DEVINFO_DATA)
-            data.DevInst = devinst
-            # Re-query property via cfgmgr (SetupDi handle enum already done).
             level = _read_byte_prop(devinst, DEVPKEY_BLUETOOTH_BATTERY)
             if level is None or not (0 <= level <= 100):
                 continue
@@ -203,6 +210,25 @@ def read_batteries_detailed() -> tuple[dict[str, int], dict[str, int]]:
             name = (_read_string_prop(devinst, DEVPKEY_DEVICE_FRIENDLY)
                     or _read_string_prop(devinst, DEVPKEY_NAME))
             if addr and addr not in trusted:
+                by_addr[addr] = level
+            if name and name.lower() not in by_name:
+                by_name[name.lower()] = level
+
+        # Pass 3: any remaining node that exposes the Bluetooth battery property
+        # (some Xbox BT stacks hang the value off SWD\ / container nodes).
+        for instance_id, devinst in nodes:
+            upper = instance_id.upper()
+            if upper.startswith("HID\\") or "XINPUT" in upper or upper.startswith("USB\\"):
+                continue
+            if upper.startswith(_BT_PREFIX):
+                continue
+            level = _read_byte_prop(devinst, DEVPKEY_BLUETOOTH_BATTERY)
+            if level is None or not (0 <= level <= 100):
+                continue
+            addr = _address_from_instance_id(instance_id)
+            name = (_read_string_prop(devinst, DEVPKEY_DEVICE_FRIENDLY)
+                    or _read_string_prop(devinst, DEVPKEY_NAME))
+            if addr and addr not in trusted and addr not in by_addr:
                 by_addr[addr] = level
             if name and name.lower() not in by_name:
                 by_name[name.lower()] = level
