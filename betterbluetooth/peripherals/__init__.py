@@ -75,6 +75,39 @@ def _names_match(a: str, b: str) -> bool:
     return bool(strong) or len(shared) >= 2
 
 
+# Higher = more trustworthy. WinRT synthesizes mWh buckets (often stuck ~10%).
+_BATTERY_RANK = {
+    "PnP": 100,
+    "HID": 90,
+    "GATT": 80,
+    "WinRT Gamepad": 25,
+    "WinRT Raw": 25,
+    "XInput": 15,
+}
+
+
+def _battery_rank(dev: Device) -> int:
+    extra = dev.extra or {}
+    via = extra.get("battery_via") or extra.get("via") or ""
+    return _BATTERY_RANK.get(str(via), 40)
+
+
+def _apply_battery(dst: Device, src: Device) -> bool:
+    """Copy battery from src onto dst when src is missing or lower-quality."""
+    if src.battery is None:
+        return False
+    if dst.battery is not None and _battery_rank(src) <= _battery_rank(dst):
+        return False
+    dst.battery = src.battery
+    if src.charging is not None:
+        dst.charging = src.charging
+    dst.extra = dict(dst.extra or {})
+    via = (src.extra or {}).get("battery_via") or (src.extra or {}).get("via")
+    if via:
+        dst.extra["battery_via"] = via
+    return True
+
+
 def merge(bluetooth: list[Device], peripherals: list[Device]) -> list[Device]:
     """Attach peripheral readings to matching Bluetooth devices; append the rest."""
     by_addr = {d.address: d for d in bluetooth}
@@ -84,6 +117,9 @@ def merge(bluetooth: list[Device], peripherals: list[Device]) -> list[Device]:
         by_name.setdefault(d.name, []).append(d)
     result = list(bluetooth)
     seen: set[str] = set()
+
+    # Prefer high-quality sources first so a later coarse WinRT/XInput cannot stick.
+    peripherals = sorted(peripherals, key=_battery_rank, reverse=True)
 
     for p in peripherals:
         bt = by_addr.get(p.extra.get("bt_address", ""))
@@ -134,10 +170,7 @@ def merge(bluetooth: list[Device], peripherals: list[Device]) -> list[Device]:
 
         if bt is not None:
             if bt.connected:
-                if bt.battery is None and p.battery is not None:
-                    bt.battery = p.battery
-                if bt.charging is None and p.charging is not None:
-                    bt.charging = p.charging
+                _apply_battery(bt, p)
                 if bt.kind == DeviceKind.OTHER:
                     bt.kind = DeviceKind.GAMEPAD
                 # Keep HID / OEM names so X-mode pads (ShanWan→Xbox) still match layouts.

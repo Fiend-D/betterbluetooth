@@ -147,9 +147,14 @@ def read_batteries() -> dict[str, int]:
 
 
 def read_batteries_detailed() -> tuple[dict[str, int], dict[str, int]]:
-    """Return (by_address, by_lowercase_name) battery maps."""
+    """Return (by_address, by_lowercase_name) battery maps.
+
+    Prefer levels found by walking up from HID/XINPUT (same path as Windows Settings
+    for Xbox BT). Plain BTHENUM nodes can be stale and only fill gaps.
+    """
     by_addr: dict[str, int] = {}
     by_name: dict[str, int] = {}
+    trusted: set[str] = set()  # addresses confirmed via HID ancestry
     handle = _setupapi.SetupDiGetClassDevsW(None, None, None, DIGCF_PRESENT | DIGCF_ALLCLASSES)
     if handle in (None, INVALID_HANDLE_VALUE):
         return by_addr, by_name
@@ -158,49 +163,55 @@ def read_batteries_detailed() -> tuple[dict[str, int], dict[str, int]]:
         data = SP_DEVINFO_DATA()
         data.cbSize = ctypes.sizeof(SP_DEVINFO_DATA)
         id_buf = ctypes.create_unicode_buffer(512)
+        nodes: list[tuple[str, int]] = []  # (instance_id, DevInst)
         while _setupapi.SetupDiEnumDeviceInfo(handle, index, ctypes.byref(data)):
             index += 1
             if not _setupapi.SetupDiGetDeviceInstanceIdW(handle, ctypes.byref(data), id_buf, 512, None):
                 continue
-            instance_id = id_buf.value or ""
+            nodes.append((id_buf.value or "", data.DevInst))
+
+        # Pass 1: HID / XINPUT / USB → climb to Bluetooth battery (authoritative).
+        for instance_id, devinst in nodes:
             upper = instance_id.upper()
-            # Direct Bluetooth / HFP nodes
-            if upper.startswith(_BT_PREFIX):
-                prop_type = wintypes.ULONG()
-                value = ctypes.c_ubyte()
-                ok = _setupapi.SetupDiGetDevicePropertyW(
-                    handle, ctypes.byref(data), ctypes.byref(DEVPKEY_BLUETOOTH_BATTERY),
-                    ctypes.byref(prop_type), ctypes.byref(value), 1, None, 0)
-                if ok and 0 <= value.value <= 100:
-                    addr = _address_from_instance_id(instance_id)
-                    if addr:
-                        by_addr[addr] = value.value
-                    # Friendly name via cfgmgr
-                    name = (_read_string_prop(data.DevInst, DEVPKEY_DEVICE_FRIENDLY)
-                            or _read_string_prop(data.DevInst, DEVPKEY_NAME))
-                    if name:
-                        by_name[name.lower()] = value.value
-                continue
-            # HID / XINPUT nodes: climb to Bluetooth parent (Xbox Series BT path).
             if not (upper.startswith("HID\\") or "XINPUT" in upper or upper.startswith("USB\\")):
                 continue
-            if "VID_045E" not in upper and "VID_" not in upper and "XINPUT" not in upper:
-                # Still try any HID — cheap and catches Gamesir/8BitDo BT stacks.
-                pass
-            level, name, parent_id = _walk_battery(data.DevInst)
+            level, name, parent_id = _walk_battery(devinst)
             if level is None:
                 continue
             addr = _address_from_instance_id(parent_id) or _address_from_instance_id(instance_id)
             if addr:
                 by_addr[addr] = level
+                trusted.add(addr)
             if name:
+                by_name[name.lower()] = level
+
+        # Pass 2: BTHENUM / HFP — only fill addresses not already trusted.
+        for instance_id, devinst in nodes:
+            upper = instance_id.upper()
+            if not upper.startswith(_BT_PREFIX):
+                continue
+            prop_type = wintypes.ULONG()
+            value = ctypes.c_ubyte()
+            data = SP_DEVINFO_DATA()
+            data.cbSize = ctypes.sizeof(SP_DEVINFO_DATA)
+            data.DevInst = devinst
+            # Re-query property via cfgmgr (SetupDi handle enum already done).
+            level = _read_byte_prop(devinst, DEVPKEY_BLUETOOTH_BATTERY)
+            if level is None or not (0 <= level <= 100):
+                continue
+            addr = _address_from_instance_id(instance_id)
+            name = (_read_string_prop(devinst, DEVPKEY_DEVICE_FRIENDLY)
+                    or _read_string_prop(devinst, DEVPKEY_NAME))
+            if addr and addr not in trusted:
+                by_addr[addr] = level
+            if name and name.lower() not in by_name:
                 by_name[name.lower()] = level
     finally:
         _setupapi.SetupDiDestroyDeviceInfoList(handle)
     try:
         from ..debuglog import log
         sample = ", ".join(f"{a[-5:]}={v}%" for a, v in list(by_addr.items())[:8])
-        log("pnp", f"battery nodes={len(by_addr)} names={len(by_name)} {sample}")
+        log("pnp", f"battery nodes={len(by_addr)} trusted={len(trusted)} names={len(by_name)} {sample}")
     except Exception:
         pass
     return by_addr, by_name

@@ -324,10 +324,17 @@ class WindowsBackend(Backend):
                     if low and (low in n or n in low):
                         level = v
                         break
-            dev.battery = level
+            if level is not None:
+                dev.battery = level
+                dev.extra = dict(dev.extra or {})
+                dev.extra["battery_via"] = "PnP"
             if dev.battery is None and address in le_objs:
                 # GATT Battery Service — BLE pads / headsets / mice.
-                dev.battery = await self._gatt_battery(address, le_objs[address])
+                gatt = await self._gatt_battery(address, le_objs[address])
+                if gatt is not None:
+                    dev.battery = gatt
+                    dev.extra = dict(dev.extra or {})
+                    dev.extra["battery_via"] = "GATT"
         return list(merged.values())
 
     async def _gatt_battery(self, address: str, dev: BluetoothLEDevice) -> int | None:

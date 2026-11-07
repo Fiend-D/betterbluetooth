@@ -443,25 +443,28 @@ def scan_gamepads(state: dict) -> list[Device]:
     seen: set[bytes] = set()
     counter = int(state.get("counter", 0))
 
-    # 0) PnP — same source as Windows Settings (best for Xbox BT).
+    # 0) PnP — same source as Windows Settings (exact %). WinRT mWh ratios
+    # often bucket to ~10% and must not win after a full charge.
     pnp = _pnp_as_devices()
     log("battery", f"pnp={len(pnp)} " + ", ".join(f"{d.name}:{d.battery}%" for d in pnp[:6]))
     result.extend(pnp)
+    pnp_hit = any(d.battery is not None for d in pnp)
 
-    # 1) WinRT (cached)
-    winrt = _winrt_batteries()
-    log("battery", f"winrt={len(winrt)} " + ", ".join(f"{d.name}:{d.battery}%" for d in winrt))
+    # 1) WinRT — last resort only; synthesized capacities are coarse / wrong.
+    winrt = [] if pnp_hit else _winrt_batteries()
+    log("battery", f"winrt={len(winrt)} skipped_for_pnp={pnp_hit} "
+        + ", ".join(f"{d.name}:{d.battery}%" for d in winrt))
     for w in winrt:
-        if any(d.battery is not None and "xbox" in (d.name or "").lower() for d in result):
-            continue
+        w.extra["battery_via"] = w.extra.get("via") or "WinRT Gamepad"
+        w.extra["battery_coarse"] = True
         result.append(w)
 
-    # 2) XInput coarse
-    xinput = _xinput_batteries()
+    # 2) XInput coarse buckets (empty/low/med/full) — only if nothing better.
+    xinput = [] if (pnp_hit or winrt) else _xinput_batteries()
     log("battery", f"xinput={len(xinput)} " + ", ".join(f"{d.name}:{d.battery}%" for d in xinput))
     for xi in xinput:
-        if any(d.battery is not None and "xbox" in (d.name or "").lower() for d in result):
-            continue
+        xi.extra["battery_via"] = "XInput"
+        xi.extra["battery_coarse"] = True
         result.append(xi)
 
     # 3) Vendor HID

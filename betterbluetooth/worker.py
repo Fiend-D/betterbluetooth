@@ -129,7 +129,8 @@ class BackendWorker(QObject):
                 log("battery", "periph=" + ", ".join(
                     f"{p.name}:{p.battery}/{p.extra.get('via')}" for p in peripherals)[:400])
                 log("battery", "merged_pads=" + ", ".join(
-                    f"{d.name}:{d.battery}" for d in pads)[:400])
+                    f"{d.name}:{d.battery}/{d.extra.get('battery_via') or d.extra.get('via')}"
+                    for d in pads)[:400])
         except Exception:
             pass
         self.devicesChanged.emit(merged)
