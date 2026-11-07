@@ -1,6 +1,6 @@
 [project]
 name = "betterbluetooth"
-version = "1.1.14"
+version = "1.1.15"
 description = "Cross-platform Bluetooth device manager with per-device battery tray icons"
 readme = "README.md"
 license = { text = "MIT" }

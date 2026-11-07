@@ -126,7 +126,16 @@ class InputPage(QWidget):
         self.keepalive.set_checked_silent(self._profile.joycon_keepalive)
         if dev.kind == DeviceKind.GAMEPAD:
             self.visuals.setCurrentWidget(self.gamepad)
-            self.gamepad.set_device_name(dev.name)
+            # Blend BT name + HID/product hints so X-mode ShanWan etc. still match.
+            extra = dev.extra or {}
+            hint_parts = [
+                dev.name or "",
+                extra.get("bt_name") or "",
+                extra.get("product") or "",
+                " ".join(extra.get("bt_names") or ()),
+                " ".join(extra.get("model_hints") or ()),
+            ]
+            self.gamepad.set_device_name(" ".join(p for p in hint_parts if p))
             self._set_grab(False)
             self._hint.setText("请按手柄按键查看高亮；点示意图按键后再按目标键（可为键盘键）完成改建。")
             from ..debuglog import log, log_path
@@ -188,9 +197,16 @@ class InputPage(QWidget):
     def _refresh_maps(self) -> None:
         if not self._profile:
             return
+        from ..inputmap.codes import compact_label
         maps = {}
         for rule in self._profile.rules:
-            maps[rule.from_code] = code_label(rule.to_codes[0]) if rule.to_codes else "禁用"
+            if not rule.to_codes:
+                maps[rule.from_code] = "⊘"
+            elif self._kind == DeviceKind.GAMEPAD:
+                # Pad diagram: swap the glyph only, keep original button chrome.
+                maps[rule.from_code] = compact_label(rule.to_codes[0])
+            else:
+                maps[rule.from_code] = code_label(rule.to_codes[0])
         self._board().set_mappings(maps)
 
     def _on_bind_source(self, code: str) -> None:

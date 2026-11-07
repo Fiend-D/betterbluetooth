@@ -140,6 +140,16 @@ def merge(bluetooth: list[Device], peripherals: list[Device]) -> list[Device]:
                     bt.charging = p.charging
                 if bt.kind == DeviceKind.OTHER:
                     bt.kind = DeviceKind.GAMEPAD
+                # Keep HID / OEM names so X-mode pads (ShanWan→Xbox) still match layouts.
+                bt.extra = dict(bt.extra or {})
+                hints = list(bt.extra.get("model_hints") or [])
+                for n in [p.name, p.extra.get("bt_name"), *(p.extra.get("bt_names") or [])]:
+                    if n and n not in hints:
+                        hints.append(str(n))
+                if hints:
+                    bt.extra["model_hints"] = hints[:12]
+                if p.extra.get("product") and not bt.extra.get("product"):
+                    bt.extra["product"] = p.extra["product"]
             continue
 
         # Unmatched peripheral: still show it (with battery) instead of dropping.

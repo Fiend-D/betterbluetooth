@@ -28,6 +28,8 @@ GAMESIR = 0x3537
 FLYDIGI_V1 = 0x04B4
 FLYDIGI_V2 = 0x37D7
 BETOP = 0x20BC
+SHANWAN = 0x2563
+SHANWAN_ALT = 0x20BC  # ShanWan "poor mode" / Betop share
 
 NINTENDO_PRODUCTS = {
     0x2006: "Joy-Con (L)",
@@ -68,6 +70,9 @@ FLYDIGI_PRODUCTS = {
     0x2501: "Flydigi Apex", 0x2502: "Flydigi Apex 6",
     0x2401: "Flydigi Vader",
 }
+SHANWAN_HINTS = (
+    "ShanWan", "山湾", "Q34U2", "Q34U", "Q42", "Q36", "Q33", "Q39",
+)
 
 SUBCMD_GET_VOLTAGE = 0x50
 NEUTRAL_RUMBLE = bytes([0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40])
@@ -491,6 +496,13 @@ def scan_gamepads(state: dict) -> list[Device]:
         elif vid in (FLYDIGI_V1, FLYDIGI_V2):
             family = "flydigi"
             name = FLYDIGI_PRODUCTS.get(pid, name or "Flydigi Controller")
+        elif vid == SHANWAN or (vid == SHANWAN_ALT and "betop" not in (name or "").lower()):
+            family = "shanwan"
+            raw = (entry.get("product_string") or name or "").strip()
+            # Prefer OEM strings that still carry Q34U / Q42 even in X-mode clones.
+            name = raw if raw else "ShanWan Controller"
+            if not any(h.lower() in name.lower() for h in ("q34", "q42", "q36", "shan", "山")):
+                name = f"ShanWan {name}".strip()
         elif vid == BETOP:
             family = "betop"
             name = name or "BETOP Controller"
@@ -549,6 +561,16 @@ def scan_gamepads(state: dict) -> list[Device]:
                     d.battery = level
                     d.charging = charging
             continue
+        hint_names = [product, name]
+        if family == "shanwan":
+            hint_names.extend(SHANWAN_HINTS)
+            # Q34U2 often spoofs Xbox — keep both so the diagram picks 小肩键+背键.
+            if any(t in product.lower() for t in ("q34u2", "q34u 2", "二代")) or "q34u2" in name.lower():
+                hint_names.append("Q34U2")
+            elif "q34u" in product.lower() or "q34u" in name.lower():
+                hint_names.append("Q34U")
+        extra = _pad_extra("HID", *hint_names, address=address)
+        extra["product"] = product
         result.append(Device(
             address=f"hid:{vid:04x}:{pid:04x}:{serial or path.hex()[:12]}",
             name=product,
@@ -557,7 +579,7 @@ def scan_gamepads(state: dict) -> list[Device]:
             battery=level,
             transport="wireless",
             charging=charging,
-            extra=_pad_extra("HID", product, name, address=address),
+            extra=extra,
         ))
 
     state["counter"] = counter

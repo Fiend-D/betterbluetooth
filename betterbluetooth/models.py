@@ -126,6 +126,7 @@ def kind_from_name(name: str | None) -> DeviceKind | None:
         "gamesir", "盖世小鸡", "flydigi", "飞智", "betop", "北通",
         "gulikit", "谷粒", "pxn", "莱仕达", "iine", "良值", "mocute", "魔卡特",
         "vader", "apex", "tarantula", "cyclone",
+        "shanwan", "山湾", "山弯", "q34u", "q42", "easysmx", "易速马", "ipega",
     )):
         return DeviceKind.GAMEPAD
     if any(tok in text for tok in ("keyboard", "keychron", "mx keys", "magic keyboard")):

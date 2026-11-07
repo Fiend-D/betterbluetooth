@@ -143,28 +143,37 @@ class EdenGamepad(QWidget):
         if st.has_touchpad:
             tx, ty = p["touchpad"]
             hits.append(_Hit("BTN_TOUCHPAD", "触控板", tx, ty, 36, "touch"))
-        # Extra paddles / M / C / Z along the bottom edge
+        # 小肩键 L4/R4 sit between bumper and trigger
+        bumpers = list(st.bumpers)
+        if len(bumpers) >= 1:
+            hits.append(_Hit(bumpers[0][0], bumpers[0][1], -155, -148, 14, "bumper"))
+        if len(bumpers) >= 2:
+            hits.append(_Hit(bumpers[1][0], bumpers[1][1], 155, -148, 14, "bumper"))
+        for i, (code, label) in enumerate(bumpers[2:]):
+            hits.append(_Hit(code, label, -40 + i * 40, -155, 12, "bumper"))
+        # Back paddles / M / C / Z along the bottom edge
         extras = list(st.extras)
         if extras:
             n_ex = len(extras)
-            span = min(220.0, 36.0 * n_ex)
+            span = min(220.0, 40.0 * n_ex)
             start_x = -span / 2 + 18
             for i, (code, label) in enumerate(extras):
-                if code in ("BTN_TOUCHPAD",) or (code in ("BTN_EXTRA1", "BTN_EXTRA2") and st.shell.startswith("joycon")):
-                    # Already represented or drawn on rails for Joy-Con.
-                    if st.shell.startswith("joycon"):
-                        side = -70 if i == 0 else 70
-                        hits.append(_Hit(code, label, side, 0, 14, "pill"))
+                if code in ("BTN_TOUCHPAD",):
                     continue
-                hits.append(_Hit(code, label, start_x + i * (span / max(1, n_ex - 1) if n_ex > 1 else 0), 95, 14, "pill"))
+                if st.shell.startswith("joycon") and code in ("BTN_EXTRA1", "BTN_EXTRA2"):
+                    side = -70 if i == 0 else 70
+                    hits.append(_Hit(code, label, side, 0, 14, "pill"))
+                    continue
+                step = span / max(1, n_ex - 1) if n_ex > 1 else 0
+                hits.append(_Hit(code, label, start_x + i * step, 95, 14, "pill"))
         return hits
 
     def set_device_name(self, name: str | None) -> None:
         self._style = detect_gamepad_style(name)
         self._hits = self._build_hits()
         hint = self._style.model_hint or self._style.label
-        extras = "、".join(lbl for _, lbl in self._style.extras[:4])
-        extra_txt = f" · 扩展键 {extras}" if extras else ""
+        bits = [lbl for _, lbl in (*self._style.bumpers, *self._style.extras)]
+        extra_txt = f" · 扩展键 {'、'.join(bits[:6])}" if bits else ""
         self._tip.setText(f"型号：{hint}{extra_txt} · 点按键改键，实体键高亮")
         st = self._style
         self._c_primary = QColor(st.case)
@@ -326,8 +335,8 @@ class EdenGamepad(QWidget):
 
     def _draw_legend(self, p: QPainter, rect: QRectF, code: str, default: str,
                      *, accent: str = "", base_px: int = 12) -> None:
+        # Remap only swaps the glyph — keep original chrome / colors / size.
         shown = self._shown(code, default)
-        remapped = bool(self._maps.get(code)) and code != self._armed
         font = QFont(p.font())
         font.setBold(True)
         if len(shown) <= 2:
@@ -340,9 +349,7 @@ class EdenGamepad(QWidget):
             font.setPixelSize(max(8, base_px - 3))
             shown = shown[:8]
         p.setFont(font)
-        if remapped:
-            p.setPen(QColor(self._style.accent))
-        elif accent and code not in self._pressed and code != self._armed:
+        if accent and code not in self._pressed and code != self._armed and code not in self._maps:
             p.setPen(QColor(accent))
         else:
             p.setPen(self._c_font)
@@ -421,8 +428,7 @@ class EdenGamepad(QWidget):
             p.drawEllipse(center, 24, 24)
             p.setBrush(self._c_highlight2 if pressed else self._c_button2)
             p.drawEllipse(center, 17, 17)
-            remapped = self._shown(code, "")
-            if remapped and code in self._maps and code != self._armed:
+            if code in self._maps and code != self._armed:
                 self._draw_legend(
                     p, QRectF(center.x() - 22, center.y() - 10, 44, 20), code, "L3", base_px=11)
             else:
@@ -444,18 +450,17 @@ class EdenGamepad(QWidget):
             (st.face_codes[1], st.face_labels[1], face + QPointF(-d, 0), st.face_colors[1]),
         ]
         for code, label, pos, accent in positions:
-            remapped = bool(self._maps.get(code)) and code != self._armed
-            radius = 18 if remapped else 15
             p.setPen(QPen(self._c_outline, 1.2))
             p.setBrush(self._btn_color(code))
-            p.drawEllipse(pos, radius, radius)
-            if accent and not remapped and code not in self._pressed and code != self._armed:
+            p.drawEllipse(pos, 15, 15)
+            # Keep original colored ring even after remap — only the legend changes.
+            if accent and code not in self._pressed and code != self._armed:
                 p.setBrush(Qt.NoBrush)
                 p.setPen(QPen(QColor(accent), 2.0))
                 p.drawEllipse(pos, 11, 11)
             self._draw_legend(
                 p, QRectF(pos.x() - 20, pos.y() - 12, 40, 24), code, label,
-                accent=accent, base_px=15 if remapped else 13,
+                accent=accent, base_px=13,
             )
 
     def _draw_dpad(self, p: QPainter, c: QPointF) -> None:
@@ -495,8 +500,7 @@ class EdenGamepad(QWidget):
             p.setPen(QPen(self._c_outline, 1.2))
             p.setBrush(self._btn_color(code))
             p.drawEllipse(c + QPointF(px, py), 11, 11)
-            remapped = bool(self._maps.get(code)) and code != self._armed
-            if remapped:
+            if code in self._maps and code != self._armed:
                 self._draw_legend(
                     p, QRectF(c.x() + px - 14, c.y() + py - 8, 28, 16),
                     code, "+" if plus else "−", base_px=10,
@@ -512,8 +516,7 @@ class EdenGamepad(QWidget):
         p.setBrush(self._btn_color("BTN_MODE"))
         p.drawEllipse(c + QPointF(gx, gy), 11, 11)
         label = self._style.guide_label or "●"
-        remapped = bool(self._maps.get("BTN_MODE")) and self._armed != "BTN_MODE"
-        if not remapped:
+        if "BTN_MODE" not in self._maps or self._armed == "BTN_MODE":
             p.setBrush(self._c_button2)
             p.drawEllipse(c + QPointF(gx, gy), 7, 7)
         self._draw_legend(
@@ -535,14 +538,16 @@ class EdenGamepad(QWidget):
 
     def _draw_extras(self, p: QPainter, c: QPointF) -> None:
         for h in self._hits:
-            if h.kind != "pill" and h.code not in {e[0] for e in self._style.extras}:
+            if h.kind == "bumper":
+                p.setPen(QPen(self._c_outline, 1.1))
+                p.setBrush(self._btn_color(h.code))
+                rect = QRectF(h.x - 18, h.y - 9, 36, 18)
+                p.drawRoundedRect(rect, 5, 5)
+                self._draw_legend(p, rect, h.code, h.label, base_px=10)
+                continue
+            if h.kind != "pill":
                 continue
             if h.code in ("BTN_TOUCHPAD", "BTN_CAPTURE"):
-                continue
-            if h.kind not in ("pill", "circle"):
-                continue
-            # Only draw extras that sit on the bottom row / joycon rails
-            if abs(h.y) < 70 and not self._style.shell.startswith("joycon"):
                 continue
             p.setPen(QPen(self._c_outline, 1.1))
             p.setBrush(self._btn_color(h.code))

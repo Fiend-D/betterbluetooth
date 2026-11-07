@@ -39,8 +39,10 @@ class GamepadStyle:
     select_label: str = "View"
     start_label: str = "Menu"
     guide_label: str = "Guide"
-    # Extra model-specific controls: (code, label)
+    # Back paddles / M keys: (code, label)
     extras: tuple[tuple[str, str], ...] = ()
+    # Front micro-bumpers / 小肩键 (L4/R4), drawn near LB/RB
+    bumpers: tuple[tuple[str, str], ...] = ()
     has_touchpad: bool = False
     has_capture: bool = False
     model_hint: str = ""
@@ -313,6 +315,128 @@ STYLES: dict[str, GamepadStyle] = {
         has_capture=True,
         model_hint="良值 IINE",
     ),
+    # —— 山湾 ShanWan ——
+    "shanwan_q34u2": _style(
+        id="shanwan_q34u2", label="山湾 Q34U 二代", layout="xbox", shell="xbox",
+        case="#1C2030", case_edge="#0A0E18", plate="#2A3448", gloss="#3A4860",
+        button="#2A3448", button_top="#3A4860", button_side="#141C28",
+        legend="#F0F4FA", legend_dim="#8898B0",
+        accent="#FF7043", pressed="#FFAB91", armed="#FFB020",
+        stick_well="#0C121C", stick_ring="#1A2434", stick_cap="#2A3448",
+        dpad="#222C3C", dpad_top="#2E3848",
+        brand_mark="Q34UⅡ",
+        face_labels=("Y", "X", "B", "A"),
+        face_codes=("BTN_NORTH", "BTN_WEST", "BTN_EAST", "BTN_SOUTH"),
+        face_colors=("#C8A000", "#2D6BB8", "#C43C2E", "#2E8B2E"),
+        shoulder_l="LB", shoulder_l2="LT", shoulder_r="RB", shoulder_r2="RT",
+        select_label="View", start_label="Menu", guide_label="",
+        extras=(("BTN_EXTRA1", "M1"), ("BTN_EXTRA2", "M2")),
+        bumpers=(("BTN_EXTRA5", "L4"), ("BTN_EXTRA6", "R4")),
+        model_hint="山湾 Q34U 二代 · 2背键+2小肩键",
+    ),
+    "shanwan_q34u": _style(
+        id="shanwan_q34u", label="山湾 Q34U", layout="xbox", shell="xbox",
+        case="#1C2030", case_edge="#0A0E18", plate="#2A3448", gloss="#3A4860",
+        button="#2A3448", button_top="#3A4860", button_side="#141C28",
+        legend="#F0F4FA", legend_dim="#8898B0",
+        accent="#FF7043", pressed="#FFAB91", armed="#FFB020",
+        stick_well="#0C121C", stick_ring="#1A2434", stick_cap="#2A3448",
+        dpad="#222C3C", dpad_top="#2E3848",
+        brand_mark="Q34U",
+        face_labels=("Y", "X", "B", "A"),
+        face_codes=("BTN_NORTH", "BTN_WEST", "BTN_EAST", "BTN_SOUTH"),
+        face_colors=("#C8A000", "#2D6BB8", "#C43C2E", "#2E8B2E"),
+        shoulder_l="LB", shoulder_l2="LT", shoulder_r="RB", shoulder_r2="RT",
+        select_label="View", start_label="Menu", guide_label="",
+        extras=(("BTN_EXTRA1", "M1"), ("BTN_EXTRA2", "M2")),
+        model_hint="山湾 Q34U · 2背键",
+    ),
+    "shanwan_q42": _style(
+        id="shanwan_q42", label="山湾 Q42", layout="xbox", shell="xbox",
+        case="#1C2030", case_edge="#0A0E18", plate="#2A3448", gloss="#3A4860",
+        button="#2A3448", button_top="#3A4860", button_side="#141C28",
+        legend="#F0F4FA", legend_dim="#8898B0",
+        accent="#42A5F5", pressed="#90CAF9", armed="#FFB020",
+        stick_well="#0C121C", stick_ring="#1A2434", stick_cap="#2A3448",
+        dpad="#222C3C", dpad_top="#2E3848",
+        brand_mark="Q42",
+        face_labels=("Y", "X", "B", "A"),
+        face_codes=("BTN_NORTH", "BTN_WEST", "BTN_EAST", "BTN_SOUTH"),
+        face_colors=("#C8A000", "#2D6BB8", "#C43C2E", "#2E8B2E"),
+        shoulder_l="LB", shoulder_l2="LT", shoulder_r="RB", shoulder_r2="RT",
+        select_label="View", start_label="Menu", guide_label="",
+        extras=(("BTN_EXTRA1", "M1"), ("BTN_EXTRA2", "M2")),
+        model_hint="山湾 Q42 / Q42XL",
+    ),
+    "shanwan": _style(
+        id="shanwan", label="山湾", layout="xbox", shell="xbox",
+        case="#1C2030", case_edge="#0A0E18", plate="#2A3448", gloss="#3A4860",
+        button="#2A3448", button_top="#3A4860", button_side="#141C28",
+        legend="#F0F4FA", legend_dim="#8898B0",
+        accent="#FF7043", pressed="#FFAB91", armed="#FFB020",
+        stick_well="#0C121C", stick_ring="#1A2434", stick_cap="#2A3448",
+        dpad="#222C3C", dpad_top="#2E3848",
+        brand_mark="ShanWan",
+        face_labels=("Y", "X", "B", "A"),
+        face_codes=("BTN_NORTH", "BTN_WEST", "BTN_EAST", "BTN_SOUTH"),
+        face_colors=("#C8A000", "#2D6BB8", "#C43C2E", "#2E8B2E"),
+        shoulder_l="LB", shoulder_l2="LT", shoulder_r="RB", shoulder_r2="RT",
+        select_label="View", start_label="Menu", guide_label="",
+        extras=(("BTN_EXTRA1", "M1"), ("BTN_EXTRA2", "M2")),
+        model_hint="山湾 ShanWan",
+    ),
+    "easysmx": _style(
+        id="easysmx", label="易速马", layout="xbox", shell="xbox",
+        case="#161820", case_edge="#080A10", plate="#262A34", gloss="#363C4A",
+        button="#2A303C", button_top="#3A4454", button_side="#14181E",
+        legend="#F2F4F8", legend_dim="#8890A0",
+        accent="#00E676", pressed="#69F0AE", armed="#FFB020",
+        stick_well="#0E1016", stick_ring="#1A1E26", stick_cap="#2E3440",
+        dpad="#222630", dpad_top="#2E3440",
+        brand_mark="EasySMX",
+        face_labels=("Y", "X", "B", "A"),
+        face_codes=("BTN_NORTH", "BTN_WEST", "BTN_EAST", "BTN_SOUTH"),
+        face_colors=("#C8A000", "#2D6BB8", "#C43C2E", "#2E8B2E"),
+        shoulder_l="LB", shoulder_l2="LT", shoulder_r="RB", shoulder_r2="RT",
+        select_label="View", start_label="Menu", guide_label="",
+        extras=(("BTN_EXTRA1", "M1"), ("BTN_EXTRA2", "M2"),
+                ("BTN_EXTRA3", "M3"), ("BTN_EXTRA4", "M4")),
+        bumpers=(("BTN_EXTRA5", "L4"), ("BTN_EXTRA6", "R4")),
+        model_hint="易速马 X20 / S05",
+    ),
+    "ipega": _style(
+        id="ipega", label="iPega", layout="xbox", shell="xbox",
+        case="#1A1C22", case_edge="#0A0C10", plate="#2A2E38", gloss="#3A4050",
+        button="#2A303C", button_top="#3A4454", button_side="#14181E",
+        legend="#F2F4F8", legend_dim="#8890A0",
+        accent="#29B6F6", pressed="#81D4FA", armed="#FFB020",
+        stick_well="#0E1016", stick_ring="#1A1E26", stick_cap="#2E3440",
+        dpad="#222630", dpad_top="#2E3440",
+        brand_mark="iPega",
+        face_labels=("Y", "X", "B", "A"),
+        face_codes=("BTN_NORTH", "BTN_WEST", "BTN_EAST", "BTN_SOUTH"),
+        face_colors=("#C8A000", "#2D6BB8", "#C43C2E", "#2E8B2E"),
+        shoulder_l="L1", shoulder_l2="L2", shoulder_r="R1", shoulder_r2="R2",
+        select_label="Select", start_label="Start", guide_label="Home",
+        extras=(("BTN_EXTRA1", "M1"), ("BTN_EXTRA2", "M2")),
+        model_hint="iPega / 飞智兄弟款",
+    ),
+    "mocute": _style(
+        id="mocute", label="魔卡特", layout="xbox", shell="xbox",
+        case="#1A1C22", case_edge="#0A0C10", plate="#2A2E38", gloss="#3A4050",
+        button="#2A303C", button_top="#3A4454", button_side="#14181E",
+        legend="#F2F4F8", legend_dim="#8890A0",
+        accent="#AB47BC", pressed="#CE93D8", armed="#FFB020",
+        stick_well="#0E1016", stick_ring="#1A1E26", stick_cap="#2E3440",
+        dpad="#222630", dpad_top="#2E3440",
+        brand_mark="MOCUTE",
+        face_labels=("Y", "X", "B", "A"),
+        face_codes=("BTN_NORTH", "BTN_WEST", "BTN_EAST", "BTN_SOUTH"),
+        shoulder_l="L1", shoulder_l2="L2", shoulder_r="R1", shoulder_r2="R2",
+        select_label="Select", start_label="Start", guide_label="Home",
+        extras=(("BTN_EXTRA1", "M1"), ("BTN_EXTRA2", "M2")),
+        model_hint="魔卡特 MOCUTE",
+    ),
     "generic": _style(
         id="generic", label="通用手柄", layout="generic", shell="xbox",
         case="#2A2D32", case_edge="#14161A", plate="#3A3E45", gloss="#4A5058",
@@ -334,6 +458,14 @@ STYLES: dict[str, GamepadStyle] = {
 
 # More specific rules first. Tokens matched as substrings of lowercased name.
 _BRAND_RULES: list[tuple[str, tuple[str, ...]]] = [
+    ("shanwan_q34u2", (
+        "q34u2", "q34u 2", "q34u二代", "q34u 二代", "q34uⅡ", "q34uⅱ",
+        "shanwan q34u2", "山湾q34u2", "山弯q34u2",
+    )),
+    ("shanwan_q34u", ("q34u", "q34u-8k", "shanwan q34", "山湾q34", "山弯q34")),
+    ("shanwan_q42", ("q42xl", "q42", "shanwan q42", "山湾q42", "山弯q42")),
+    ("shanwan", ("shanwan", "shan wan", "山湾", "山弯", "shootingplus")),
+    ("easysmx", ("easysmx", "easy smx", "易速马", "x20 pro", "x20pro", "s05 pro", "s05pro", "赤兔")),
     ("xbox_elite", ("xbox elite", "elite series", "elite 2", "elite2")),
     ("dualshock", ("dualshock", "ds4", "ps4")),
     ("playstation", (
@@ -358,10 +490,12 @@ _BRAND_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("flydigi", (
         "flydigi", "飞智", "vader", "apex 3", "apex 4", "apex 5", "apex3", "apex4", "apex5",
     )),
-    ("betop", ("betop", "北通", "batop", "zeus", "asura", "阿修罗")),
+    ("betop", ("betop", "北通", "batop", "zeus", "asura", "阿修罗", "盘古")),
     ("gulikit", ("gulikit", "谷粒", "kingkong", "kk3", "kk2")),
     ("pxn", ("pxn", "莱仕达", "p5", "p50", "9603")),
     ("iine", ("iine", "良值", "lianzhi")),
+    ("ipega", ("ipega", "pg-")),
+    ("mocute", ("mocute", "魔卡特")),
     ("xbox", (
         "xbox", "x-box", "xinput", "microsoft xbox", "xbox wireless",
         "xbox one", "xbox series", "gamepad for xbox",
@@ -371,16 +505,16 @@ _BRAND_RULES: list[tuple[str, tuple[str, ...]]] = [
 
 def detect_gamepad_style(device_name: str | None) -> GamepadStyle:
     text = (device_name or "").lower().strip()
-    # Xbox before generic "Wireless Controller" (DS4's classic BT name).
+    # Model-specific Chinese pads before generic Xbox spoof names.
+    for style_id, tokens in _BRAND_RULES:
+        if style_id == "xbox":
+            continue
+        if any(tok in text for tok in tokens):
+            return STYLES[style_id]
     if "xbox" in text or "xinput" in text or "x-box" in text:
         if "elite" in text:
             return STYLES["xbox_elite"]
         return STYLES["xbox"]
-    for style_id, tokens in _BRAND_RULES:
-        if style_id.startswith("xbox"):
-            continue
-        if any(tok in text for tok in tokens):
-            return STYLES[style_id]
     # DualShock 4 often advertises only as "Wireless Controller".
     if text in ("wireless controller", "sony wireless controller"):
         return STYLES["dualshock"]

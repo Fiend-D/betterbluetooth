@@ -52,6 +52,7 @@ LABELS: dict[str, str] = {
     "BTN_C": "C", "BTN_Z": "Z",
     "BTN_EXTRA1": "M1 / Paddle 1", "BTN_EXTRA2": "M2 / Paddle 2",
     "BTN_EXTRA3": "M3 / Paddle 3", "BTN_EXTRA4": "M4 / Paddle 4",
+    "BTN_EXTRA5": "L4 / 小肩左", "BTN_EXTRA6": "R4 / 小肩右",
     "JC_A": "A", "JC_B": "B", "JC_X": "X", "JC_Y": "Y",
     "JC_L": "L", "JC_R": "R", "JC_ZL": "ZL", "JC_ZR": "ZR",
     "JC_MINUS": "−", "JC_PLUS": "+", "JC_HOME": "Home", "JC_CAPTURE": "Capture",
@@ -144,6 +145,47 @@ def label(code: str) -> str:
     if code.startswith("KEY_"):
         return code[4:].replace("LEFT", "L ").replace("RIGHT", "R ").title()
     return code
+
+
+# Compact overlay text for the pad diagram (keep button style; only swap the glyph).
+_COMPACT: dict[str, str] = {
+    "KEY_SPACE": "␣", "KEY_ENTER": "⏎", "KEY_KPENTER": "⏎", "KEY_ESC": "Esc",
+    "KEY_BACKSPACE": "⌫", "KEY_TAB": "⇥", "KEY_CAPSLOCK": "Caps",
+    "KEY_LEFTCTRL": "Ctrl", "KEY_RIGHTCTRL": "Ctrl",
+    "KEY_LEFTSHIFT": "⇧", "KEY_RIGHTSHIFT": "⇧",
+    "KEY_LEFTALT": "Alt", "KEY_RIGHTALT": "Alt",
+    "KEY_LEFTMETA": "Win", "KEY_RIGHTMETA": "Win",
+    "KEY_UP": "↑", "KEY_DOWN": "↓", "KEY_LEFT": "←", "KEY_RIGHT": "→",
+    "KEY_DELETE": "Del", "KEY_INSERT": "Ins", "KEY_HOME": "Home", "KEY_END": "End",
+    "KEY_PAGEUP": "PgUp", "KEY_PAGEDOWN": "PgDn",
+    "BTN_SOUTH": "A", "BTN_EAST": "B", "BTN_NORTH": "Y", "BTN_WEST": "X",
+    "BTN_TL": "LB", "BTN_TR": "RB", "BTN_TL2": "LT", "BTN_TR2": "RT",
+    "BTN_SELECT": "−", "BTN_START": "+", "BTN_MODE": "⌂",
+    "BTN_THUMBL": "L3", "BTN_THUMBR": "R3",
+    "BTN_DPAD_UP": "↑", "BTN_DPAD_DOWN": "↓", "BTN_DPAD_LEFT": "←", "BTN_DPAD_RIGHT": "→",
+    "BTN_CAPTURE": "截", "BTN_TOUCHPAD": "触",
+    "BTN_C": "C", "BTN_Z": "Z",
+    "BTN_EXTRA1": "M1", "BTN_EXTRA2": "M2", "BTN_EXTRA3": "M3", "BTN_EXTRA4": "M4",
+    "BTN_EXTRA5": "L4", "BTN_EXTRA6": "R4",
+}
+
+
+def compact_label(code: str | None) -> str:
+    """Short glyph for painting onto a face / shoulder button."""
+    if not code:
+        return "⊘"
+    if code in _COMPACT:
+        return _COMPACT[code]
+    if code.startswith("KEY_") and len(code) == 5:
+        return code[-1]
+    if code.startswith("KEY_F") and code[5:].isdigit():
+        return code[4:]
+    if code.startswith("KEY_"):
+        bare = code[4:]
+        return bare[:4] if len(bare) > 4 else bare
+    if code.startswith("BTN_"):
+        return label(code).split("/")[0].strip()[:4]
+    return code[:4]
 
 
 # Built-in keyboard remodel presets: list of (from, to) ; to=None means suppress.
