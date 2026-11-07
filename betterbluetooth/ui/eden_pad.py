@@ -406,17 +406,18 @@ class EdenGamepad(QWidget):
             (st.face_codes[1], st.face_labels[1], face + QPointF(-d, 0), st.face_colors[1]),  # west
         ]
         for code, label, pos, accent in positions:
+            remapped = bool(self._maps.get(code)) and code != self._armed
+            radius = 18 if remapped else 15
             p.setPen(QPen(self._c_outline, 1.2))
             p.setBrush(self._btn_color(code))
-            p.drawEllipse(pos, 15, 15)
-            remapped = bool(self._maps.get(code)) and code != self._armed
+            p.drawEllipse(pos, radius, radius)
             if accent and not remapped and code not in self._pressed and code != self._armed:
                 p.setBrush(Qt.NoBrush)
                 p.setPen(QPen(QColor(accent), 2.0))
                 p.drawEllipse(pos, 11, 11)
             self._draw_legend(
-                p, QRectF(pos.x() - 16, pos.y() - 11, 32, 22), code, label,
-                accent=accent, base_px=13,
+                p, QRectF(pos.x() - 20, pos.y() - 12, 40, 24), code, label,
+                accent=accent, base_px=15 if remapped else 13,
             )
 
     def _draw_dpad(self, p: QPainter, c: QPointF) -> None:
