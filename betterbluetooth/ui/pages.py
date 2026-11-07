@@ -162,7 +162,13 @@ class DeviceCard(QFrame):
             if dev.battery is not None:
                 text = f"已连接 · 电量 {dev.battery}%"
             elif dev.kind.value == "gamepad":
-                text = "已连接 · 电量不可读"
+                # X-mode clones (山湾/小鸡/飞智/北通…) spoof Xbox BT — no honest %.
+                name_l = (dev.name or "").lower()
+                spoofish = any(t in name_l for t in (
+                    "xbox wireless", "xbox bluetooth", "xbox controller",
+                )) or bool((dev.extra or {}).get("xbox_bt_spoof"))
+                text = ("已连接 · 电量不可读（X档伪装常见）" if spoofish
+                        else "已连接 · 电量不可读")
             else:
                 text = "已连接"
             if dev.charging:

@@ -53,9 +53,12 @@ XBOX_PRODUCTS = {
 }
 # PIDs used ONLY over Bluetooth (SDL usb_ids.h). WinRT TryGetBatteryReport for
 # these often returns remain=100 full=1000 → fake "10%". Never trust that ratio.
+# Many Chinese pads (ShanWan / GameSir / Flydigi / Betop / EasySMX / …) spoof the
+# same VID/PID in X-Input Bluetooth mode — same fake WinRT bucket, same empty
+# XInput battery, same missing PnP property. Show "unreadable", never 10%.
 XBOX_BT_ONLY_PIDS = frozenset({
     0x02E0,  # Xbox One S Rev1 BT
-    0x02FD,  # Xbox One S Rev2 BT
+    0x02FD,  # Xbox One S Rev2 BT (also common ShanWan/GameSir X-mode spoof)
     0x0B05,  # Elite Series 2 BT
     0x0B0C,  # Adaptive BT
     0x0B13,  # Series X BLE
@@ -596,6 +599,29 @@ def scan_gamepads(state: dict) -> list[Device]:
                 if "xbox" in (d.name or "").lower() and d.battery is None and level is not None:
                     d.battery = level
                     d.charging = charging
+            # Still emit a stub so merge can flag X-mode spoof clones (山湾/小鸡/…).
+            if pid in XBOX_BT_ONLY_PIDS and not any(
+                "xbox" in (d.name or "").lower() for d in result
+            ):
+                extra = _pad_extra("HID", product, name, address=address)
+                extra["product"] = product
+                extra["xbox_bt_spoof"] = True
+                result.append(Device(
+                    address=f"hid:{vid:04x}:{pid:04x}:{serial or path.hex()[:12]}",
+                    name=product or "Xbox Wireless Controller",
+                    kind=DeviceKind.GAMEPAD,
+                    connected=True,
+                    battery=None,
+                    transport="wireless",
+                    extra=extra,
+                ))
+            elif pid in XBOX_BT_ONLY_PIDS:
+                for d in result:
+                    if "xbox" in (d.name or "").lower():
+                        d.extra = dict(d.extra or {})
+                        d.extra["xbox_bt_spoof"] = True
+                        if product:
+                            d.extra["product"] = product
             continue
         hint_names = [product, name]
         if family == "shanwan":

@@ -137,6 +137,15 @@ class Controller(QObject):
             if alias:
                 d.system_name = d.system_name or d.name
                 d.name = alias
+            # Manual pad layout (X-mode clones spoofing Xbox need this).
+            try:
+                from .inputmap.profile import device_key
+                prof = self.inputmap.store.profiles.get(device_key(d))
+                if prof and prof.pad_style:
+                    d.extra = dict(d.extra or {})
+                    d.extra["pad_style"] = prof.pad_style
+            except Exception:
+                pass
         self.identities.save()
         if settings_dirty:
             s.save()

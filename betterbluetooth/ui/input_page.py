@@ -11,6 +11,7 @@ from ..inputmap.base import InputEvent
 from ..inputmap.codes import qt_key_to_code
 from ..models import DeviceKind
 from .eden_pad import EdenGamepad
+from .gamepad_styles import looks_like_xbox_spoof_name, selectable_pad_styles
 from .input_visuals import VisualKeyboard
 from .pages import _page_header
 from .widgets import ToggleSwitch, button, label
@@ -29,6 +30,8 @@ class InputPage(QWidget):
         self._kind: DeviceKind = DeviceKind.KEYBOARD
         self._armed_src: str | None = None
         self._grabbing = False
+        self._pad_hint_name = ""
+        self._pad_style_silent = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -70,6 +73,25 @@ class InputPage(QWidget):
         top.addWidget(clear_btn)
         root.addLayout(top)
         self._reload_presets()
+
+        self.pad_style_row = QFrame()
+        srow = QHBoxLayout(self.pad_style_row)
+        srow.setContentsMargins(0, 0, 0, 0)
+        srow.setSpacing(8)
+        srow.addWidget(label("手柄型号"))
+        self.pad_style = QComboBox()
+        self.pad_style.setMinimumWidth(220)
+        self.pad_style.setToolTip(
+            "X 档国产手柄常伪装成「Xbox Wireless Controller」。\n"
+            "自动识别会当成 Xbox；请选手动型号以显示背键/小肩键布局。\n"
+            "电量在这种伪装模式下通常不可读（不是假的 10%）。"
+        )
+        for sid, title in selectable_pad_styles():
+            self.pad_style.addItem(title, sid)
+        self.pad_style.currentIndexChanged.connect(self._pad_style_changed)
+        srow.addWidget(self.pad_style, 1)
+        root.addWidget(self.pad_style_row)
+        self.pad_style_row.hide()
 
         self._hint = label("打开本页后直接按实体键即可测试高亮；点映射框后再按目标键完成改建。", "secondary", wrap=True)
         self._hint.setMinimumHeight(36)
@@ -126,6 +148,7 @@ class InputPage(QWidget):
         self.keepalive.set_checked_silent(self._profile.joycon_keepalive)
         if dev.kind == DeviceKind.GAMEPAD:
             self.visuals.setCurrentWidget(self.gamepad)
+            self.pad_style_row.show()
             # Blend BT name + HID/product hints so X-mode ShanWan etc. still match.
             extra = dev.extra or {}
             hint_parts = [
@@ -135,15 +158,28 @@ class InputPage(QWidget):
                 " ".join(extra.get("bt_names") or ()),
                 " ".join(extra.get("model_hints") or ()),
             ]
-            self.gamepad.set_device_name(" ".join(p for p in hint_parts if p))
+            self._pad_hint_name = " ".join(p for p in hint_parts if p)
+            self._sync_pad_style_combo(self._profile.pad_style or "")
+            self.gamepad.set_device_name(self._pad_hint_name, self._profile.pad_style or None)
             self._set_grab(False)
-            self._hint.setText("请按手柄按键查看高亮；点示意图按键后再按目标键（可为键盘键）完成改建。")
+            if looks_like_xbox_spoof_name(self._pad_hint_name) and not self._profile.pad_style:
+                self._hint.setText(
+                    "此手柄蓝牙名像 Xbox（国产 X 档常见伪装）。请在上方选择实际型号"
+                    "（如山湾 Q34U 二代）以显示背键/小肩键；电量在此模式下通常不可读。"
+                )
+            else:
+                self._hint.setText("请按手柄按键查看高亮；点示意图按键后再按目标键（可为键盘键）完成改建。")
             from ..debuglog import log, log_path
-            log("ui", f"open pad page name={dev.name!r} addr={dev.address} bat={dev.battery}")
+            log("ui", f"open pad page name={dev.name!r} addr={dev.address} bat={dev.battery} "
+                f"pad_style={self._profile.pad_style!r}")
+            bat_note = ""
+            if dev.battery is None:
+                bat_note = " · 电量不可读（X 档伪装 Xbox 时常见）"
             self.status.setText(
-                (svc.capability.get("message", "") + f"  · 调试日志：{log_path()}").strip(" ·")
+                (svc.capability.get("message", "") + bat_note + f"  · 调试日志：{log_path()}").strip(" ·")
             )
         else:
+            self.pad_style_row.hide()
             self.visuals.setCurrentWidget(self.keyboard)
             self.keyboard.set_device_name(dev.name)
             self._set_grab(True)
@@ -270,6 +306,34 @@ class InputPage(QWidget):
         else:
             self._hint.setText(f"已禁用：{code_label(src)}")
             self.ctl.flyout.toast(f"已禁用 {code_label(src)}", "info", 2000)
+
+    def _sync_pad_style_combo(self, style_id: str) -> None:
+        self._pad_style_silent = True
+        try:
+            idx = self.pad_style.findData(style_id)
+            if idx < 0:
+                idx = self.pad_style.findData("")
+            self.pad_style.setCurrentIndex(max(0, idx))
+        finally:
+            self._pad_style_silent = False
+
+    def _pad_style_changed(self, _index: int = 0) -> None:
+        if self._pad_style_silent or self._profile is None:
+            return
+        if self._kind != DeviceKind.GAMEPAD:
+            return
+        sid = str(self.pad_style.currentData() or "")
+        self._profile.pad_style = sid
+        self.ctl.inputmap.save()
+        self.gamepad.set_device_name(self._pad_hint_name, sid or None)
+        self._refresh_maps()
+        if looks_like_xbox_spoof_name(self._pad_hint_name) and not sid:
+            self._hint.setText(
+                "此手柄蓝牙名像 Xbox（国产 X 档常见伪装）。请在上方选择实际型号"
+                "（如山湾 Q34U 二代）以显示背键/小肩键；电量在此模式下通常不可读。"
+            )
+        else:
+            self._hint.setText("请按手柄按键查看高亮；点示意图按键后再按目标键（可为键盘键）完成改建。")
 
     def _toggle_enable(self, on: bool) -> None:
         if not self._profile:

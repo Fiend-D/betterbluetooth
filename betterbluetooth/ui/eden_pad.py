@@ -168,13 +168,14 @@ class EdenGamepad(QWidget):
                 hits.append(_Hit(code, label, start_x + i * step, 95, 14, "pill"))
         return hits
 
-    def set_device_name(self, name: str | None) -> None:
-        self._style = detect_gamepad_style(name)
+    def set_device_name(self, name: str | None, override_id: str | None = None) -> None:
+        self._style = detect_gamepad_style(name, override_id)
         self._hits = self._build_hits()
         hint = self._style.model_hint or self._style.label
         bits = [lbl for _, lbl in (*self._style.bumpers, *self._style.extras)]
         extra_txt = f" · 扩展键 {'、'.join(bits[:6])}" if bits else ""
-        self._tip.setText(f"型号：{hint}{extra_txt} · 点按键改键，实体键高亮")
+        manual = "（手动）" if (override_id or "").strip() else ""
+        self._tip.setText(f"型号：{hint}{manual}{extra_txt} · 点按键改键，实体键高亮")
         st = self._style
         self._c_primary = QColor(st.case)
         self._c_button = QColor(st.button)

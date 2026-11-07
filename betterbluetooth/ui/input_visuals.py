@@ -142,12 +142,13 @@ class VisualGamepad(QWidget):
         self._banner.setAlignment(Qt.AlignCenter)
         self._banner.hide()
 
-    def set_device_name(self, name: str | None) -> None:
-        self._style = detect_gamepad_style(name)
+    def set_device_name(self, name: str | None, override_id: str | None = None) -> None:
+        self._style = detect_gamepad_style(name, override_id)
         self._buttons = _build_pad_layout(self._style)
         self._brand_label = self._style.label if self._style.id != "generic" else ""
+        manual = "（手动）" if (override_id or "").strip() else ""
         if self._brand_label:
-            self._tip.setText(f"样式：{self._brand_label} · 点按键改键，直接按实体键仅测试高亮")
+            self._tip.setText(f"样式：{self._brand_label}{manual} · 点按键改键，直接按实体键仅测试高亮")
         else:
             self._tip.setText("通用手柄布局 · 点按键改键，直接按实体键仅测试高亮")
         self.update()

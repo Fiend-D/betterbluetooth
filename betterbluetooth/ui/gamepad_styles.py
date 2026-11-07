@@ -663,7 +663,46 @@ _BRAND_RULES: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 
-def detect_gamepad_style(device_name: str | None) -> GamepadStyle:
+# Brands/models that commonly advertise as "Xbox Wireless Controller" / 045E:02FD
+# over Bluetooth X-Input mode. Battery is usually unreadable (same dead ends as
+# real Xbox BT); layout must be chosen manually or via non-Xbox name hints.
+XBOX_SPOOF_STYLE_IDS: frozenset[str] = frozenset({
+    "shanwan_q34u2", "shanwan_q34u", "shanwan_q42", "shanwan",
+    "gamesir", "gamesir_cyclone", "gamesir_g7", "gamesir_g7_se", "gamesir_g7_pro",
+    "gamesir_nova", "gamesir_supernova", "gamesir_tarantula", "gamesir_uranus",
+    "gamesir_kaleid", "gamesir_shadow", "gamesir_helios",
+    "flydigi", "betop", "easysmx", "ipega", "mocute", "pxn",
+})
+
+
+def looks_like_xbox_spoof_name(device_name: str | None) -> bool:
+    """True when the BT/HID name is a generic Xbox alias (no OEM model tokens)."""
+    text = (device_name or "").lower().strip()
+    if not text:
+        return False
+    for style_id, tokens in _BRAND_RULES:
+        if style_id in ("xbox", "xbox_elite"):
+            continue
+        if any(tok in text for tok in tokens):
+            return False
+    xboxish = (
+        "xbox wireless controller",
+        "xbox bluetooth gamepad",
+        "xbox controller",
+        "wireless controller",
+        "gamepad for xbox",
+    )
+    return any(x in text for x in xboxish) or text in ("xbox", "xinput")
+
+
+def detect_gamepad_style(
+    device_name: str | None,
+    override_id: str | None = None,
+) -> GamepadStyle:
+    """Resolve layout. override_id wins (user picked real model under Xbox spoof name)."""
+    oid = (override_id or "").strip()
+    if oid and oid in STYLES:
+        return STYLES[oid]
     text = (device_name or "").lower().strip()
     # Model-specific Chinese pads before generic Xbox spoof names.
     for style_id, tokens in _BRAND_RULES:
@@ -679,6 +718,34 @@ def detect_gamepad_style(device_name: str | None) -> GamepadStyle:
     if text in ("wireless controller", "sony wireless controller"):
         return STYLES["dualshock"]
     return STYLES["generic"]
+
+
+def selectable_pad_styles() -> list[tuple[str, str]]:
+    """(style_id, label) for the manual model picker. '' = auto."""
+    preferred = [
+        "shanwan_q34u2", "shanwan_q34u", "shanwan_q42", "shanwan",
+        "gamesir_cyclone", "gamesir_g7_pro", "gamesir_g7", "gamesir_tarantula",
+        "gamesir_nova", "gamesir_supernova", "gamesir",
+        "flydigi", "betop", "easysmx", "pxn", "ipega", "mocute",
+        "8bitdo", "gulikit", "iine",
+        "xbox", "xbox_elite", "playstation", "dualshock", "switch",
+        "generic",
+    ]
+    out: list[tuple[str, str]] = [("", "自动识别")]
+    seen: set[str] = set()
+    for sid in preferred:
+        st = STYLES.get(sid)
+        if st is None or sid in seen:
+            continue
+        seen.add(sid)
+        hint = st.model_hint or st.label
+        out.append((sid, hint))
+    for sid, st in STYLES.items():
+        if sid in seen or sid == "generic":
+            continue
+        seen.add(sid)
+        out.append((sid, st.model_hint or st.label))
+    return out
 
 
 def listed_models() -> list[str]:

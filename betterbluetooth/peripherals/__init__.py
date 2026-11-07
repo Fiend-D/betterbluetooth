@@ -183,6 +183,8 @@ def merge(bluetooth: list[Device], peripherals: list[Device]) -> list[Device]:
                     bt.extra["model_hints"] = hints[:12]
                 if p.extra.get("product") and not bt.extra.get("product"):
                     bt.extra["product"] = p.extra["product"]
+                if p.extra.get("xbox_bt_spoof"):
+                    bt.extra["xbox_bt_spoof"] = True
             continue
 
         # Unmatched peripheral: still show it (with battery) instead of dropping.

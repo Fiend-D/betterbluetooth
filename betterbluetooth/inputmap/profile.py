@@ -51,6 +51,9 @@ class InputProfile:
     vid: int | None = None
     pid: int | None = None
     serial: str = ""
+    # Manual gamepad layout when X-mode pads spoof as "Xbox Wireless Controller".
+    # Empty = auto-detect from name / HID hints. Style id from gamepad_styles.STYLES.
+    pad_style: str = ""
 
     def rule_map(self) -> dict[str, list[str]]:
         return {r.from_code: list(r.to_codes) for r in self.rules}
@@ -68,6 +71,7 @@ class InputProfile:
             vid=raw.get("vid"),
             pid=raw.get("pid"),
             serial=str(raw.get("serial") or ""),
+            pad_style=str(raw.get("pad_style") or ""),
         )
 
 
