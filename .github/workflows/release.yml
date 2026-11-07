@@ -64,10 +64,13 @@ jobs:
             winrt-Windows.Devices.Bluetooth \
             winrt-Windows.Devices.Bluetooth.GenericAttributeProfile \
             winrt-Windows.Devices.Enumeration \
+            winrt-Windows.Devices.Power \
             winrt-Windows.Devices.Radios \
             winrt-Windows.Foundation \
             winrt-Windows.Foundation.Collections \
-            winrt-Windows.Storage.Streams
+            winrt-Windows.Gaming.Input \
+            winrt-Windows.Storage.Streams \
+            winrt-Windows.System.Power
           pip install -e . --no-deps
       - name: Build onedir + onefile
         shell: bash

@@ -38,7 +38,6 @@ def create_sources(mock: bool = False) -> list[PeripheralSource]:
             pass
         else:
             sources.append(HidppSource())
-        # Unified Xbox / DualSense / Switch HID (+ XInput) battery reader.
         try:
             from .gamepad_hid import GamepadHidSource
         except ImportError:
@@ -63,10 +62,17 @@ def _names_match(a: str, b: str) -> bool:
     al, bl = a.lower(), b.lower()
     if al == bl or al in bl or bl in al:
         return True
+    # Shared distinctive tokens (xbox/controller/dualsense/…)
     ta, tb = _name_tokens(a), _name_tokens(b)
     if not ta or not tb:
         return False
-    return len(ta & tb) >= 1 and (ta <= tb or tb <= ta or len(ta & tb) >= 2)
+    shared = ta & tb
+    if not shared:
+        return False
+    # "controller" alone is too weak; require another token or exact token overlap ≥2
+    weak = {"controller", "wireless", "game", "gamepad", "bluetooth"}
+    strong = shared - weak
+    return bool(strong) or len(shared) >= 2
 
 
 def merge(bluetooth: list[Device], peripherals: list[Device]) -> list[Device]:
@@ -78,30 +84,48 @@ def merge(bluetooth: list[Device], peripherals: list[Device]) -> list[Device]:
         by_name.setdefault(d.name, []).append(d)
     result = list(bluetooth)
     seen: set[str] = set()
+
     for p in peripherals:
         bt = by_addr.get(p.extra.get("bt_address", ""))
+        candidates: list[str] = []
+        if p.extra.get("bt_name"):
+            candidates.append(p.extra["bt_name"])
+        candidates.extend(p.extra.get("bt_names") or [])
+        candidates.append(p.name)
+
         if bt is None:
-            # Exact name, then alias list, then fuzzy gamepad match.
-            candidates: list[str] = []
-            if p.extra.get("bt_name"):
-                candidates.append(p.extra["bt_name"])
-            candidates.extend(p.extra.get("bt_names") or [])
             for name in candidates:
                 same = by_name.get(name, [])
                 if len(same) == 1:
                     bt = same[0]
                     break
-            if bt is None and p.kind == DeviceKind.GAMEPAD:
-                fuzzy = [d for d in connected_bt
-                         if d.kind == DeviceKind.GAMEPAD
-                         and any(_names_match(d.name, n) for n in candidates + [p.name])]
-                if len(fuzzy) == 1:
-                    bt = fuzzy[0]
-                elif len(fuzzy) > 1:
-                    # Prefer a connected gamepad that still lacks battery.
-                    needy = [d for d in fuzzy if d.battery is None]
-                    if len(needy) == 1:
-                        bt = needy[0]
+
+        if bt is None and p.kind == DeviceKind.GAMEPAD:
+            # Match by name even when Windows mis-classified the BT device as OTHER.
+            fuzzy = [
+                d for d in connected_bt
+                if any(_names_match(d.name, n) for n in candidates)
+                and (d.kind == DeviceKind.GAMEPAD or d.kind == DeviceKind.OTHER
+                     or "controller" in (d.name or "").lower()
+                     or "xbox" in (d.name or "").lower()
+                     or "dual" in (d.name or "").lower()
+                     or "joy" in (d.name or "").lower())
+            ]
+            if len(fuzzy) == 1:
+                bt = fuzzy[0]
+            elif len(fuzzy) > 1:
+                needy = [d for d in fuzzy if d.battery is None]
+                pads = [d for d in needy if d.kind == DeviceKind.GAMEPAD]
+                if len(pads) == 1:
+                    bt = pads[0]
+                elif len(needy) == 1:
+                    bt = needy[0]
+            elif len(connected_bt) == 1 and connected_bt[0].battery is None:
+                # Sole connected BT device + a gamepad battery reading → attach.
+                sole = connected_bt[0]
+                if sole.kind in (DeviceKind.GAMEPAD, DeviceKind.OTHER) or _names_match(sole.name, p.name):
+                    bt = sole
+
         if bt is not None:
             if bt.connected:
                 if bt.battery is None and p.battery is not None:
@@ -111,7 +135,9 @@ def merge(bluetooth: list[Device], peripherals: list[Device]) -> list[Device]:
                 if bt.kind == DeviceKind.OTHER:
                     bt.kind = DeviceKind.GAMEPAD
             continue
-        if p.extra.get("bt_address") or p.address in seen:
+
+        # Unmatched peripheral: still show it (with battery) instead of dropping.
+        if p.address in seen:
             continue
         seen.add(p.address)
         result.append(p)

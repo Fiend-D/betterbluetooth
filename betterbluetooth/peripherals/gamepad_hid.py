@@ -1,7 +1,7 @@
-"""Windows HID / XInput battery readers for mainstream gamepads (Xbox, DualSense/DS4, Switch).
+"""Windows gamepad battery: WinRT Gaming.Input + XInput + HID (Switch/Sony).
 
-Complements (and can replace) the Nintendo-only SwitchControllerSource for battery display.
-Bluetooth Classic gamepads rarely expose GATT Battery; we read from the HID path or XInput.
+Bluetooth Classic pads rarely expose GATT Battery. Prefer WinRT TryGetBatteryReport
+(Xbox / GIP), then XInput coarse levels, then vendor HID reports.
 """
 from __future__ import annotations
 
@@ -34,7 +34,6 @@ SONY_PRODUCTS = {
     0x0CE6: "DualSense",
     0x0DF2: "DualSense Edge",
 }
-# Common Xbox Bluetooth / wireless dongle PIDs (not exhaustive).
 XBOX_PRODUCTS = {
     0x02E0: "Xbox Wireless Controller",
     0x02FD: "Xbox Wireless Controller",
@@ -47,7 +46,7 @@ SUBCMD_GET_VOLTAGE = 0x50
 NEUTRAL_RUMBLE = bytes([0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40])
 _SWITCH_LEVEL = {8: 100, 6: 70, 4: 40, 2: 15, 0: 0}
 _HEX_MAC = re.compile(r"^[0-9a-fA-F]{12}$")
-_XINPUT_LEVEL = {0: 5, 1: 30, 2: 60, 3: 100}  # EMPTY/LOW/MED/FULL
+_XINPUT_LEVEL = {0: 5, 1: 30, 2: 60, 3: 100}
 
 
 def _bt_address(serial: str | None) -> str | None:
@@ -62,6 +61,29 @@ def _guess_names(*names: str) -> list[str]:
         if n and n not in out:
             out.append(n)
     return out
+
+
+def _pad_extra(via: str, *names: str, address: str | None = None) -> dict:
+    names = _guess_names(*names)
+    extra: dict = {
+        "via": via,
+        "bt_name": names[0] if names else "",
+        "bt_names": names + [
+            "Xbox Wireless Controller", "Xbox Controller", "Wireless Controller",
+            "Pro Controller", "DualSense", "DualShock", "Controller",
+        ],
+    }
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    cleaned = []
+    for n in extra["bt_names"]:
+        if n and n not in seen:
+            seen.add(n)
+            cleaned.append(n)
+    extra["bt_names"] = cleaned
+    if address:
+        extra["bt_address"] = address
+    return extra
 
 
 def _read_switch_battery(dev: hid.device, counter: int, timeout: float = 0.55) -> tuple[int, bool] | None:
@@ -80,31 +102,23 @@ def _read_switch_battery(dev: hid.device, counter: int, timeout: float = 0.55) -
 
 
 def _read_sony_battery(dev: hid.device, pid: int) -> tuple[int, bool] | None:
-    """Best-effort DualShock 4 / DualSense battery from an input report."""
     try:
-        # Prefer feature/input report that carries battery; fall back to a short read.
         if pid in (0x0CE6, 0x0DF2):
-            # DualSense BT often uses report 0x31; USB uses 0x01.
             for report_id, offset in ((0x01, 53), (0x31, 53)):
                 try:
                     got = dev.get_input_report(report_id, 64)
                     if got and len(got) > offset:
                         raw = got[offset]
-                        level = min(100, max(0, (raw & 0x0F) * 10 + 5))
-                        charging = bool(raw & 0x10)
-                        return level, charging
+                        return min(100, max(0, (raw & 0x0F) * 10 + 5)), bool(raw & 0x10)
                 except Exception:
                     continue
         else:
-            # DualShock 4: USB report 0x01 byte 30; BT report 0x11 byte 30.
             for report_id in (0x01, 0x11):
                 try:
                     got = dev.get_input_report(report_id, 64)
                     if got and len(got) > 30:
                         raw = got[30]
-                        level = min(100, max(0, (raw & 0x0F) * 10 + 5))
-                        charging = bool(raw & 0x10)
-                        return level, charging
+                        return min(100, max(0, (raw & 0x0F) * 10 + 5)), bool(raw & 0x10)
                 except Exception:
                     continue
         data = dev.read(64, 120)
@@ -141,15 +155,13 @@ def _xinput_batteries() -> list[Device]:
     get_bat.argtypes = [wintypes.DWORD, ctypes.c_ubyte, ctypes.POINTER(XINPUT_BATTERY_INFORMATION)]
     get_bat.restype = wintypes.DWORD
 
-    # BATTERY_DEVTYPE_GAMEPAD = 0; BATTERY_TYPE_DISCONNECTED = 0; WIRED = 1; ALKALINE = 2; NIMH = 3; UNKNOWN = 0xFF
     out: list[Device] = []
     for idx in range(4):
         info = XINPUT_BATTERY_INFORMATION()
         if get_bat(idx, 0, ctypes.byref(info)) != 0:
             continue
-        if info.BatteryType in (0, 0xFF):  # disconnected / unknown
-            continue
-        if info.BatteryType == 1:  # wired — no wireless battery to show
+        # 0=disconnected, 1=wired, 0xFF=unknown — skip those
+        if info.BatteryType in (0, 1, 0xFF):
             continue
         level = _XINPUT_LEVEL.get(info.BatteryLevel)
         if level is None:
@@ -162,9 +174,87 @@ def _xinput_batteries() -> list[Device]:
             battery=level,
             transport="wireless",
             charging=False,
-            extra={"via": "XInput", "bt_name": "Xbox Wireless Controller",
-                   "bt_names": ["Xbox Wireless Controller", "Xbox Controller", "Controller"]},
+            extra=_pad_extra("XInput", "Xbox Wireless Controller"),
         ))
+    return out
+
+
+def _winrt_batteries() -> list[Device]:
+    """Xbox / GIP / many XInput pads via Windows.Gaming.Input.TryGetBatteryReport."""
+    if sys.platform != "win32":
+        return []
+    out: list[Device] = []
+    try:
+        from winrt.windows.gaming.input import Gamepad, RawGameController
+    except ImportError:
+        return []
+    battery_status_charging = None
+    try:
+        from winrt.windows.system.power import BatteryStatus
+        battery_status_charging = BatteryStatus.CHARGING
+    except Exception:
+        try:
+            from winrt.windows.devices.power import BatteryStatus as _BS  # type: ignore
+            battery_status_charging = getattr(_BS, "CHARGING", None)
+        except Exception:
+            pass
+
+    def _from_report(report, name: str, addr: str, via: str) -> Device | None:
+        if report is None:
+            return None
+        try:
+            rem = report.remaining_capacity_in_milliwatt_hours
+            full = report.full_charge_capacity_in_milliwatt_hours
+            status = getattr(report, "status", None)
+        except Exception:
+            return None
+        if rem is None or full is None or full <= 0:
+            return None
+        level = int(round(max(0, min(100, (rem / full) * 100))))
+        charging = bool(battery_status_charging is not None and status == battery_status_charging)
+        return Device(
+            address=addr,
+            name=name or "Gamepad",
+            kind=DeviceKind.GAMEPAD,
+            connected=True,
+            battery=level,
+            transport="wireless",
+            charging=charging,
+            extra=_pad_extra(via, name or "Gamepad", "Xbox Wireless Controller", "Wireless Controller"),
+        )
+
+    try:
+        pads = list(Gamepad.gamepads)
+    except Exception:
+        pads = []
+    for i, pad in enumerate(pads):
+        try:
+            report = pad.try_get_battery_report()
+        except Exception:
+            continue
+        dev = _from_report(report, "Xbox Wireless Controller", f"winrt-gamepad:{i}", "WinRT Gamepad")
+        if dev:
+            out.append(dev)
+
+    try:
+        raws = list(RawGameController.raw_game_controllers)
+    except Exception:
+        raws = []
+    for i, pad in enumerate(raws):
+        try:
+            report = pad.try_get_battery_report()
+            name = (getattr(pad, "display_name", None) or "Wireless Controller")
+            if callable(name):
+                name = name()
+            name = str(name or "Wireless Controller")
+        except Exception:
+            continue
+        # Skip if we already have a WinRT Gamepad reading (often the same physical pad).
+        if any(d.battery is not None for d in out) and "xbox" in name.lower():
+            continue
+        dev = _from_report(report, name, f"winrt-raw:{i}", "WinRT Raw")
+        if dev:
+            out.append(dev)
     return out
 
 
@@ -174,12 +264,32 @@ def scan_gamepads(state: dict) -> list[Device]:
     result: list[Device] = []
     seen: set[bytes] = set()
     counter = int(state.get("counter", 0))
+
+    # 1) WinRT first — most reliable for Xbox Bluetooth on modern Windows.
+    winrt = _winrt_batteries()
+    log("battery", f"winrt={len(winrt)} " + ", ".join(f"{d.name}:{d.battery}%" for d in winrt))
+    result.extend(winrt)
+
+    # 2) XInput coarse levels (often fails on BT Xbox; still useful when it works).
+    xinput = _xinput_batteries()
+    log("battery", f"xinput={len(xinput)} " + ", ".join(f"{d.name}:{d.battery}%" for d in xinput))
+    for xi in xinput:
+        if any(d.battery is not None and "xbox" in (d.name or "").lower() for d in result):
+            # Already have a better WinRT reading.
+            for d in result:
+                if d.battery is None and "xbox" in (d.name or "").lower():
+                    d.battery = xi.battery
+                    d.extra["via"] = "XInput"
+            continue
+        result.append(xi)
+
+    # 3) HID for Switch / Sony (and Xbox presence without level).
     try:
         entries = list(hid.enumerate(0, 0))
     except Exception as e:  # noqa: BLE001
         log("hid", f"enumerate failed: {e}")
         entries = []
-    log("hid", f"enumerate={len(entries)} known_scan…")
+    log("hid", f"enumerate={len(entries)}")
 
     for entry in entries:
         vid = entry.get("vendor_id", 0)
@@ -199,29 +309,29 @@ def scan_gamepads(state: dict) -> list[Device]:
         else:
             continue
         seen.add(path)
-        log("hid", f"match vid={vid:04x} pid={pid:04x} family={family} "
-            f"product={entry.get('product_string')!r} serial={entry.get('serial_number')!r}")
-
         product = (entry.get("product_string") or name or "").strip() or name
         serial = entry.get("serial_number") or ""
         address = _bt_address(serial)
+        log("hid", f"match vid={vid:04x} pid={pid:04x} family={family} "
+            f"product={product!r} serial={serial!r}")
+
         reading: tuple[int, bool] | None = None
         try:
             dev = hid.device()
             dev.open_path(path)
-        except OSError:
-            # Device present but exclusive (Steam etc.) — still advertise name for merge hints.
-            result.append(Device(
-                address=f"hid:{vid:04x}:{pid:04x}:{serial or path.hex()[:12]}",
-                name=product,
-                kind=DeviceKind.GAMEPAD,
-                connected=True,
-                battery=None,
-                transport="wireless",
-                extra={"via": "HID", "bt_name": product,
-                       "bt_names": _guess_names(product, name),
-                       **({"bt_address": address} if address else {})},
-            ))
+        except OSError as e:
+            log("hid", f"open failed {family}: {e}")
+            # Still publish presence for merge / kind hints.
+            if family != "xbox" or not any("xbox" in (d.name or "").lower() for d in result):
+                result.append(Device(
+                    address=f"hid:{vid:04x}:{pid:04x}:{serial or path.hex()[:12]}",
+                    name=product,
+                    kind=DeviceKind.GAMEPAD,
+                    connected=True,
+                    battery=None,
+                    transport="wireless",
+                    extra=_pad_extra("HID", product, name, address=address),
+                ))
             continue
         try:
             if family == "switch":
@@ -229,10 +339,8 @@ def scan_gamepads(state: dict) -> list[Device]:
                 reading = _read_switch_battery(dev, counter)
             elif family == "sony":
                 reading = _read_sony_battery(dev, pid)
-            elif family == "xbox":
-                # Prefer XInput for level; HID open just confirms presence.
-                reading = None
-        except OSError:
+        except OSError as e:
+            log("hid", f"read failed {family}: {e}")
             reading = None
         finally:
             try:
@@ -241,13 +349,14 @@ def scan_gamepads(state: dict) -> list[Device]:
                 pass
 
         level, charging = reading if reading else (None, None)
-        extra = {
-            "via": "HID",
-            "bt_name": product,
-            "bt_names": _guess_names(product, name),
-        }
-        if address:
-            extra["bt_address"] = address
+        log("hid", f"{family} battery={level} charging={charging}")
+        if family == "xbox":
+            # Prefer WinRT/XInput levels already collected; only fill gaps.
+            for d in result:
+                if "xbox" in (d.name or "").lower() and d.battery is None and level is not None:
+                    d.battery = level
+                    d.charging = charging
+            continue
         result.append(Device(
             address=f"hid:{vid:04x}:{pid:04x}:{serial or path.hex()[:12]}",
             name=product,
@@ -256,24 +365,11 @@ def scan_gamepads(state: dict) -> list[Device]:
             battery=level,
             transport="wireless",
             charging=charging,
-            extra=extra,
+            extra=_pad_extra("HID", product, name, address=address),
         ))
 
     state["counter"] = counter
-    # XInput fills Xbox battery when HID path has no level.
-    xinput = _xinput_batteries()
-    if xinput:
-        # If we already have an Xbox HID entry without battery, attach level.
-        for xi in xinput:
-            attached = False
-            for d in result:
-                if "xbox" in (d.name or "").lower() and d.battery is None:
-                    d.battery = xi.battery
-                    d.extra["via"] = "XInput"
-                    attached = True
-                    break
-            if not attached:
-                result.append(xi)
+    log("battery", "scan_done=" + ", ".join(f"{d.name}:{d.battery}" for d in result)[:500])
     return result
 
 

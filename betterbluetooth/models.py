@@ -115,6 +115,25 @@ def kind_from_class(cod: int | None) -> DeviceKind:
     return DeviceKind.OTHER
 
 
+def kind_from_name(name: str | None) -> DeviceKind | None:
+    """Guess kind from a Bluetooth display name when CoD / Appearance is missing."""
+    text = (name or "").lower()
+    if not text:
+        return None
+    if any(tok in text for tok in (
+        "xbox", "dualsense", "dualshock", "joy-con", "joycon", "pro controller",
+        "gamepad", "wireless controller", "switch pro", "8bitdo",
+    )):
+        return DeviceKind.GAMEPAD
+    if any(tok in text for tok in ("keyboard", "keychron", "mx keys", "magic keyboard")):
+        return DeviceKind.KEYBOARD
+    if any(tok in text for tok in ("mouse", "mx master", "g pro", "deathadder")):
+        return DeviceKind.MOUSE
+    if any(tok in text for tok in ("headset", "airpods", "buds", "headphones", "wh-1000", "sony wh")):
+        return DeviceKind.HEADPHONES
+    return None
+
+
 def kind_from_appearance(app: int | None) -> DeviceKind:
     """Map a BLE GAP Appearance value to a DeviceKind."""
     if not app:

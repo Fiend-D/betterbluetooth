@@ -159,7 +159,12 @@ class DeviceCard(QFrame):
             elif dev.battery is not None and dev.battery <= s.low_battery_threshold:
                 text += " · 电量低"
         elif dev.connected:
-            text = "已连接" + (f" · 电量 {dev.battery}%" if dev.battery is not None else "")
+            if dev.battery is not None:
+                text = f"已连接 · 电量 {dev.battery}%"
+            elif dev.kind.value == "gamepad":
+                text = "已连接 · 电量不可读"
+            else:
+                text = "已连接"
             if dev.charging:
                 text += " · 充电中"
             elif dev.battery is not None and dev.battery <= s.low_battery_threshold:

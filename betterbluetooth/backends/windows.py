@@ -26,7 +26,10 @@ from winrt.windows.devices.enumeration import (
 from winrt.windows.devices.radios import Radio, RadioState
 from winrt.windows.storage.streams import DataReader
 
-from ..models import Device, AdapterState, kind_from_appearance, kind_from_class, normalize_address
+from ..models import (
+    Device, AdapterState, DeviceKind, kind_from_appearance, kind_from_class,
+    kind_from_name, normalize_address,
+)
 from . import win_setupapi
 from .base import Backend, BackendError
 
@@ -261,10 +264,14 @@ class WindowsBackend(Backend):
                 if dev is None or not dev.bluetooth_address:
                     continue
                 cod = getattr(getattr(dev, "class_of_device", None), "raw_value", None)
+                name = (dev.name or info.name or "蓝牙设备").strip() or "蓝牙设备"
+                kind = kind_from_class(cod)
+                if kind == DeviceKind.OTHER:
+                    kind = kind_from_name(name) or kind
                 merge(Device(
                     address=normalize_address(dev.bluetooth_address),
-                    name=(dev.name or info.name or "蓝牙设备").strip() or "蓝牙设备",
-                    kind=kind_from_class(cod),
+                    name=name,
+                    kind=kind,
                     paired=True,
                     connected=dev.connection_status == BluetoothConnectionStatus.CONNECTED,
                 ), info)
@@ -284,10 +291,14 @@ class WindowsBackend(Backend):
                 address = normalize_address(dev.bluetooth_address)
                 le_objs[address] = dev
                 appearance = getattr(getattr(dev, "appearance", None), "raw_value", None)
+                name = (dev.name or info.name or "蓝牙设备").strip() or "蓝牙设备"
+                kind = kind_from_appearance(appearance)
+                if kind == DeviceKind.OTHER:
+                    kind = kind_from_name(name) or kind
                 merge(Device(
                     address=address,
-                    name=(dev.name or info.name or "蓝牙设备").strip() or "蓝牙设备",
-                    kind=kind_from_appearance(appearance),
+                    name=name,
+                    kind=kind,
                     paired=True,
                     connected=dev.connection_status == BluetoothConnectionStatus.CONNECTED,
                 ), info)
