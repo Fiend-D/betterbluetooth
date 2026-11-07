@@ -155,7 +155,7 @@ class EdenGamepad(QWidget):
         extras = list(st.extras)
         if extras:
             n_ex = len(extras)
-            span = min(220.0, 40.0 * n_ex)
+            span = min(300.0, 34.0 * n_ex)
             start_x = -span / 2 + 18
             for i, (code, label) in enumerate(extras):
                 if code in ("BTN_TOUCHPAD",):

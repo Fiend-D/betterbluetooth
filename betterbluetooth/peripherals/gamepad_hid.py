@@ -4,7 +4,11 @@ Priority (Bluetooth Xbox etc.):
 1. Windows PnP DEVPKEY_Bluetooth_BatteryLevel (exact %, Settings source)
 2. WinRT Gaming.Input TryGetBatteryReport (cached; rate-limits)
 3. XInput coarse buckets (dongle / older firmware)
-4. Vendor HID: Switch / Sony / 8BitDo / GameSir / Flydigi
+4. Vendor HID: Switch / Sony / 8BitDo / Flydigi
+
+Vendor/product ids and report layouts follow SDL (src/joystick/usb_ids.h and
+hidapi/SDL_hidapi_*.c) and usb.ids. Models without a public protocol get no
+HID battery reader — they report "unreadable" instead of an invented value.
 """
 from __future__ import annotations
 
@@ -25,11 +29,12 @@ SONY = 0x054C
 MICROSOFT = 0x045E
 EIGHTBITDO = 0x2DC8
 GAMESIR = 0x3537
-FLYDIGI_V1 = 0x04B4
+FLYDIGI_V1 = 0x04B4  # Cypress VID used by Flydigi V1 dongles
 FLYDIGI_V2 = 0x37D7
-BETOP = 0x20BC
-SHANWAN = 0x2563
-SHANWAN_ALT = 0x20BC  # ShanWan "poor mode" / Betop share
+BETOP = 0x11C0       # usb.ids: "Betop"
+SHANWAN = 0x2563     # usb.ids: ShenZhen ShanWan Technology
+SHANWAN_ALT = 0x20BC  # usb.ids: ShenZhen ShanWan Technology (also many OEM clones)
+SHANWAN_ALT2 = 0x25F0  # usb.ids: ShanWan
 
 NINTENDO_PRODUCTS = {
     0x2006: "Joy-Con (L)",
@@ -40,16 +45,25 @@ NINTENDO_PRODUCTS = {
 SONY_PRODUCTS = {
     0x05C4: "DualShock 4",
     0x09CC: "DualShock 4",
-    0x0BA0: "DualShock 4",
+    0x0BA0: "DualShock 4",  # Sony wireless adapter
     0x0CE6: "DualSense",
     0x0DF2: "DualSense Edge",
 }
+SONY_DS5 = frozenset({0x0CE6, 0x0DF2})
 XBOX_PRODUCTS = {
-    0x02E0: "Xbox Wireless Controller",
-    0x02FD: "Xbox Wireless Controller",
-    0x0B13: "Xbox Wireless Controller",
-    0x0B20: "Xbox Wireless Controller",
-    0x0B22: "Xbox Wireless Controller",
+    0x02E0: "Xbox One S Controller",
+    0x02EA: "Xbox One S Controller",
+    0x02FD: "Xbox One S Controller",
+    0x0B20: "Xbox One S Controller",
+    0x02E3: "Xbox Elite Controller",
+    0x0B00: "Xbox Elite Series 2",
+    0x0B05: "Xbox Elite Series 2",
+    0x0B22: "Xbox Elite Series 2",
+    0x0B12: "Xbox Series X|S Controller",
+    0x0B13: "Xbox Series X|S Controller",
+    0x0B0A: "Xbox Adaptive Controller",
+    0x0B0C: "Xbox Adaptive Controller",
+    0x0B21: "Xbox Adaptive Controller",
 }
 # PIDs used ONLY over Bluetooth (SDL usb_ids.h). WinRT TryGetBatteryReport for
 # these often returns remain=100 full=1000 → fake "10%". Never trust that ratio.
@@ -71,27 +85,28 @@ EIGHTBITDO_PRODUCTS = {
     0x6001: "8BitDo SN30 Pro", 0x6101: "8BitDo SN30 Pro",
     0x6003: "8BitDo Pro 2", 0x6006: "8BitDo Pro 2",
     0x6009: "8BitDo Pro 3",
-    0x6012: "8BitDo Ultimate 2", 0x301B: "8BitDo Ultimate 2C",
+    0x6012: "8BitDo Ultimate 2 Wireless", 0x301B: "8BitDo Ultimate 2C Wireless",
     0x202F: "8BitDo Ultimate 3",
 }
+# SDL reports 8BitDo power only in its "enhanced" report. Ultimate 3 sends it
+# by default; Ultimate 2 Wireless only with v1.03+ firmware (34-byte reports).
+# The others need feature report 0x06, which switches the pad's input report
+# format for every app (games included) — never sent here.
+EIGHTBITDO_PASSIVE_BATTERY = frozenset({0x202F, 0x6012})
 GAMESIR_PRODUCTS = {
-    0x100B: "GameSir Cyclone 2", 0x102A: "GameSir Cyclone 2",
-    0x101D: "GameSir Cyclone 2", 0x1053: "GameSir Cyclone 2",
-    0x10B8: "GameSir G7 Pro", 0x103C: "GameSir Tarantula",
-    0x1022: "GameSir G7 Pro",
+    # Only ids listed in SDL usb_ids.h; other GameSir pads keep their own name.
+    0x10B8: "GameSir G7 Pro 8K",
+    0x103C: "GameSir Tarantula 8K",
 }
 FLYDIGI_PRODUCTS = {
     0x2412: "Flydigi Gamepad",
     0x2501: "Flydigi Apex", 0x2502: "Flydigi Apex 6",
     0x2401: "Flydigi Vader",
 }
-SHANWAN_HINTS = (
-    "ShanWan", "山湾", "Q34U2", "Q34U", "Q42", "Q36", "Q33", "Q39",
-)
+_HID_READERS = frozenset({"switch", "sony", "8bitdo", "flydigi"})
 
 SUBCMD_GET_VOLTAGE = 0x50
 NEUTRAL_RUMBLE = bytes([0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40])
-_SWITCH_LEVEL = {8: 100, 6: 70, 4: 40, 2: 15, 0: 0}
 _HEX_MAC = re.compile(r"^[0-9a-fA-F]{12}$")
 _XINPUT_LEVEL = {0: 5, 1: 30, 2: 60, 3: 100}
 _WINRT_CACHE: dict[str, tuple[float, int, bool]] = {}  # key → (ts, level, charging)
@@ -159,164 +174,120 @@ def _read_switch_battery(dev: hid.device, counter: int, timeout: float = 0.55) -
         data = dev.read(64, 80)
         if len(data) < 3 or data[0] not in (0x21, 0x30, 0x31):
             continue
-        nibble = data[2] >> 4
-        return _SWITCH_LEVEL.get(nibble & 0x0E, 0), bool(nibble & 0x01)
+        # SDL_hidapi_switch: level 0..8 in bits 5-7 (step 2), bit 4 = charging.
+        b = data[2]
+        level = (b & 0xE0) >> 4
+        return int(round(level / 8 * 100)), bool(b & 0x10)
     return None
 
 
-def _read_sony_battery(dev: hid.device, pid: int) -> tuple[int, bool] | None:
-    try:
-        if pid in (0x0CE6, 0x0DF2):
-            for report_id, offset in ((0x01, 53), (0x31, 53)):
-                try:
-                    got = dev.get_input_report(report_id, 64)
-                    if got and len(got) > offset:
-                        raw = got[offset]
-                        return min(100, max(0, (raw & 0x0F) * 10 + 5)), bool(raw & 0x10)
-                except Exception:
-                    continue
-        else:
-            for report_id in (0x01, 0x11):
-                try:
-                    got = dev.get_input_report(report_id, 64)
-                    if got and len(got) > 30:
-                        raw = got[30]
-                        return min(100, max(0, (raw & 0x0F) * 10 + 5)), bool(raw & 0x10)
-                except Exception:
-                    continue
-        data = dev.read(64, 120)
-        if not data:
+def _sony_percent(raw: int, ds5: bool) -> tuple[int, bool] | None:
+    """SDL_hidapi_ps4 / ps5 battery byte → (percent, charging)."""
+    level = raw & 0x0F
+    if ds5:
+        status = (raw >> 4) & 0x0F
+        if level == 0x0C:
             return None
-        if pid in (0x0CE6, 0x0DF2) and len(data) > 53:
-            raw = data[53]
-            return min(100, max(0, (raw & 0x0F) * 10 + 5)), bool(raw & 0x10)
-        if len(data) > 30:
-            raw = data[30]
-            return min(100, max(0, (raw & 0x0F) * 10 + 5)), bool(raw & 0x10)
+        if status == 0:
+            return min(level * 10 + 5, 100), False
+        if status == 1:
+            return min(level * 10 + 5, 100), True
+        if status == 2:
+            return 100, True
+        return None
+    if raw & 0x10:
+        if level <= 10:
+            return min(level * 10 + 5, 100), True
+        if level == 11:
+            return 100, True
+        return None
+    return min(level * 10 + 5, 100), False
+
+
+def _read_sony_battery(dev: hid.device, pid: int, timeout: float = 0.3) -> tuple[int, bool] | None:
+    """Passive stream read. Short reports (simple BT 0x01, 10 bytes) carry no battery."""
+    ds5 = pid in SONY_DS5
+    deadline = time.monotonic() + timeout
+    try:
+        while time.monotonic() < deadline:
+            data = dev.read(100, 60)
+            if not data:
+                continue
+            rid, n = data[0], len(data)
+            if ds5:
+                if rid == 0x01 and n >= 64:
+                    return _sony_percent(data[53], True)
+                if rid == 0x31 and n >= 55:
+                    return _sony_percent(data[54], True)
+            else:
+                if rid == 0x01 and n >= 64:
+                    return _sony_percent(data[30], False)
+                if 0x11 <= rid <= 0x19 and n >= 33:
+                    return _sony_percent(data[32], False)
     except OSError:
         return None
     return None
 
 
-def _read_8bitdo_battery(dev: hid.device, pid: int) -> tuple[int, bool] | None:
-    """Passive read of enhanced report (HaloBattery/SDL). Never enable enhanced mode."""
+def _read_8bitdo_battery(dev: hid.device, pid: int, timeout: float = 0.3) -> tuple[int, bool] | None:
+    """Enhanced report (0x04 USB / 0x01 BT, byte 14) per SDL_hidapi_8bitdo. Read-only."""
+    if pid not in EIGHTBITDO_PASSIVE_BATTERY:
+        return None
+    deadline = time.monotonic() + timeout
     try:
-        # Pro 3 always uses report 0x04; others 0x01 (BT) / 0x04 (USB) when already enhanced.
-        for report_id in (0x01, 0x04):
-            try:
-                got = dev.get_input_report(report_id, 64)
-            except Exception:
+        while time.monotonic() < deadline:
+            data = dev.read(64, 60)
+            if not data or data[0] not in (0x01, 0x04):
                 continue
-            if not got or len(got) < 15:
+            if pid == 0x6012 and len(data) < 34:
+                return None
+            if len(data) < 15:
                 continue
-            raw = got[14]
-            level = raw & 0x7F
-            if level == 0 or level > 100:
-                continue
-            charging = bool(raw & 0x80)
-            return level, charging
-        # Opportunistic stream read (already in enhanced mode via Steam etc.)
-        data = dev.read(64, 80)
-        if data and len(data) >= 15 and data[0] in (0x01, 0x04):
             raw = data[14]
             level = raw & 0x7F
-            if 1 <= level <= 100:
-                return level, bool(raw & 0x80)
-    except OSError:
-        return None
-    return None
-
-
-def _read_gamesir_battery(dev: hid.device) -> tuple[int, bool] | None:
-    """GameSir Cyclone 2: heartbeat 0F F2 00 → input 0x12 bytes 35/36 (BatteryDeck)."""
-    try:
-        pkt = bytearray(64)
-        pkt[0], pkt[1], pkt[2] = 0x0F, 0xF2, 0x00
-        try:
-            dev.write(bytes(pkt))
-        except OSError:
-            try:
-                dev.send_feature_report(bytes(pkt))
-            except Exception:
-                return None
-        deadline = time.monotonic() + 0.55
-        while time.monotonic() < deadline:
-            data = dev.read(64, 80)
-            if not data or len(data) <= 36:
-                continue
-            if data[0] != 0x12:
-                continue
-            if (data[1] | data[2] | data[3] | data[4]) == 0:
-                continue
-            charge, level = data[35], data[36]
             if level > 100:
                 continue
-            charging = charge != 0 and charge != 2
-            return int(level), charging
+            return level, bool(raw & 0x80) and level < 100
     except OSError:
         return None
     return None
 
 
-def _read_shanwan_battery(dev: hid.device) -> tuple[int, bool] | None:
-    """Probe ShanWan / GamepadSpace HID reports; protocol on PC is undocumented.
+FLYDIGI_V2_UNNUMBERED = frozenset({0x2401, 0x2502})  # Vader 5 / Apex 6
 
-    Logs a short hex dump so we can reverse a real battery byte later. Does not
-    guess percentages (avoids another fake reading).
+
+def _read_flydigi_battery(dev: hid.device, vid: int, pid: int) -> tuple[int, bool] | None:
+    """Flydigi V2 GET_INFO (0x01) reply byte 11 per SDL_hidapi_flydigi.
+
+    V1 receivers (04B4:2412) expose no battery in SDL, so none is read.
     """
+    if vid != FLYDIGI_V2:
+        return None
     try:
-        from ..debuglog import log
-        for report_id in (0x05, 0x06, 0x04, 0x01, 0xA1, 0xF1):
-            got = None
-            try:
-                got = dev.get_feature_report(report_id, 64)
-            except Exception:
-                try:
-                    got = dev.get_input_report(report_id, 64)
-                except Exception:
-                    got = None
-            if got and len(got) > 1:
-                log("hid", f"shanwan report id=0x{report_id:02x} n={len(got)} "
-                    f"hex={bytes(got[:16]).hex()}")
-        data = dev.read(64, 40)
-        if data:
-            log("hid", f"shanwan input n={len(data)} hex={bytes(data[:16]).hex()}")
-    except OSError as e:
-        try:
-            from ..debuglog import log
-            log("hid", f"shanwan probe failed: {e}")
-        except Exception:
-            pass
-    return None
-
-
-def _read_flydigi_battery(dev: hid.device, vid: int) -> tuple[int, bool] | None:
-    """Flydigi V2 status cmd 0x10 → byte 11 (SDL_hidapi_flydigi)."""
-    try:
-        if vid == FLYDIGI_V2:
-            pkt = bytearray(32)
-            pkt[0], pkt[1], pkt[2], pkt[3] = 0x03, 0x5A, 0xA5, 0x10
-            try:
-                dev.write(bytes(pkt))
-            except OSError:
-                try:
-                    dev.send_feature_report(bytes(pkt))
-                except Exception:
-                    return None
-        deadline = time.monotonic() + 0.45
+        cmd = bytearray(32)
+        cmd[0:6] = bytes([0x03, 0x5A, 0xA5, 0x01, 2, 0])
+        if pid in FLYDIGI_V2_UNNUMBERED:
+            cmd[0] = 0
+        dev.write(bytes(cmd))
+        deadline = time.monotonic() + 0.5
         while time.monotonic() < deadline:
-            data = dev.read(64, 80)
-            if not data or len(data) < 12:
+            data = dev.read(64, 60)
+            if not data:
+                continue
+            if len(data) > 2 and data[0] != 0x5A:
+                data = data[1:]
+            if len(data) < 12 or data[0] != 0x5A or data[1] != 0xA5 or data[2] != 0x01:
                 continue
             raw = data[11]
-            status = (raw >> 4) & 0x0F
-            level_n = raw & 0x0F
+            status, level = (raw >> 4) & 0x0F, raw & 0x0F
+            step = 10 if pid == 0x2502 else 20
             if status == 0:
-                return min(100, level_n * 20), False
+                return min(100, level * step), False
             if status == 1:
-                return min(100, level_n * 20), True
+                return min(100, level * step), True
             if status == 2:
                 return 100, True
+            return None
     except OSError:
         return None
     return None
@@ -365,12 +336,17 @@ def _xinput_batteries() -> list[Device]:
     return out
 
 
-def _winrt_batteries() -> list[Device]:
+def _winrt_batteries(skip_microsoft: bool = False) -> list[Device]:
+    """Per-controller WinRT battery via RawGameController (covers Gamepad too).
+
+    Xbox Bluetooth-only PIDs always report a fake 100/1000 and are skipped by
+    id; when PnP already gave the exact Xbox level, Microsoft pads are skipped.
+    """
     if sys.platform != "win32":
         return []
     out: list[Device] = []
     try:
-        from winrt.windows.gaming.input import Gamepad, RawGameController
+        from winrt.windows.gaming.input import RawGameController
     except ImportError:
         return []
     battery_status_charging = None
@@ -418,35 +394,34 @@ def _winrt_batteries() -> list[Device]:
         )
 
     try:
-        pads = list(Gamepad.gamepads)
+        raws = list(RawGameController.raw_game_controllers)
     except Exception:
-        pads = []
-    for i, pad in enumerate(pads):
+        raws = []
+    for pad in raws:
+        try:
+            vid = int(pad.hardware_vendor_id)
+            pid = int(pad.hardware_product_id)
+        except Exception:
+            vid = pid = 0
+        if vid == MICROSOFT and (pid in XBOX_BT_ONLY_PIDS or skip_microsoft):
+            continue
         try:
             report = pad.try_get_battery_report()
         except Exception:
             report = None
-        dev = _from_report(report, "Xbox Wireless Controller", f"winrt-gamepad:{i}", "WinRT Gamepad")
-        if dev:
-            out.append(dev)
-
-    try:
-        raws = list(RawGameController.raw_game_controllers)
-    except Exception:
-        raws = []
-    for i, pad in enumerate(raws):
         try:
-            report = pad.try_get_battery_report()
-            name = getattr(pad, "display_name", None) or "Wireless Controller"
-            if callable(name):
-                name = name()
-            name = str(name or "Wireless Controller")
+            name = str(pad.display_name or "")
         except Exception:
-            continue
-        if any(d.battery is not None for d in out) and "xbox" in name.lower():
-            continue
-        dev = _from_report(report, name, f"winrt-raw:{i}", "WinRT Raw")
+            name = ""
+        if vid == MICROSOFT:
+            name = XBOX_PRODUCTS.get(pid, name or "Xbox Wireless Controller")
+        try:
+            key = str(pad.non_roamable_id or "") or f"{vid:04x}:{pid:04x}"
+        except Exception:
+            key = f"{vid:04x}:{pid:04x}"
+        dev = _from_report(report, name or "Wireless Controller", f"winrt-raw:{key}", "WinRT Raw")
         if dev:
+            dev.extra["vid"], dev.extra["pid"] = vid, pid
             out.append(dev)
     return out
 
@@ -488,17 +463,6 @@ def _pnp_as_devices() -> list[Device]:
     return out
 
 
-def _hid_xbox_bt_present() -> bool:
-    """True when a Microsoft pad with a Bluetooth-only product id is attached."""
-    try:
-        for entry in hid.enumerate(MICROSOFT, 0):
-            if int(entry.get("product_id") or 0) in XBOX_BT_ONLY_PIDS:
-                return True
-    except Exception:
-        return False
-    return False
-
-
 def scan_gamepads(state: dict) -> list[Device]:
     from ..debuglog import log
 
@@ -506,28 +470,37 @@ def scan_gamepads(state: dict) -> list[Device]:
     seen: set[bytes] = set()
     counter = int(state.get("counter", 0))
 
+    try:
+        entries = list(hid.enumerate(0, 0))
+    except Exception as e:  # noqa: BLE001
+        log("hid", f"enumerate failed: {e}")
+        entries = []
+    log("hid", f"enumerate={len(entries)}")
+    xbox_bt = any(
+        e.get("vendor_id") == MICROSOFT and e.get("product_id") in XBOX_BT_ONLY_PIDS
+        for e in entries
+    )
+
     # 0) PnP — same source as Windows Settings (exact %). WinRT mWh ratios
     # often bucket to ~10% and must not win after a full charge.
     pnp = _pnp_as_devices()
     log("battery", f"pnp={len(pnp)} " + ", ".join(f"{d.name}:{d.battery}%" for d in pnp[:6]))
     result.extend(pnp)
     pnp_hit = any(d.battery is not None for d in pnp)
-    xbox_bt = _hid_xbox_bt_present()
 
-    # 1) WinRT — never for Xbox BT-only PIDs (fake 100/1000 → 10%).
-    winrt: list[Device] = []
-    if not pnp_hit and not xbox_bt:
-        winrt = _winrt_batteries()
-    log("battery", f"winrt={len(winrt)} skipped_for_pnp={pnp_hit} xbox_bt={xbox_bt} "
-        + ", ".join(f"{d.name}:{d.battery}%" for d in winrt))
+    # 1) WinRT, filtered per controller (Xbox BT-only PIDs report fake 100/1000).
+    winrt = _winrt_batteries(skip_microsoft=pnp_hit)
+    log("battery", f"winrt={len(winrt)} pnp_hit={pnp_hit} xbox_bt={xbox_bt} "
+        + ", ".join(f"{d.name}[{d.extra.get('vid', 0):04x}:{d.extra.get('pid', 0):04x}]:{d.battery}%"
+                    for d in winrt))
     for w in winrt:
-        w.extra["battery_via"] = w.extra.get("via") or "WinRT Gamepad"
+        w.extra["battery_via"] = w.extra.get("via") or "WinRT Raw"
         w.extra["battery_coarse"] = True
         result.append(w)
 
-    # 2) XInput coarse buckets — prefer over missing/fake WinRT for Xbox BT.
+    # 2) XInput coarse buckets for Xbox pads WinRT/PnP couldn't read.
     xinput: list[Device] = []
-    if not pnp_hit and (not winrt or xbox_bt):
+    if not pnp_hit and not any(w.extra.get("vid") == MICROSOFT for w in winrt):
         xinput = _xinput_batteries()
     log("battery", f"xinput={len(xinput)} " + ", ".join(f"{d.name}:{d.battery}%" for d in xinput))
     for xi in xinput:
@@ -536,12 +509,7 @@ def scan_gamepads(state: dict) -> list[Device]:
         result.append(xi)
 
     # 3) Vendor HID
-    try:
-        entries = list(hid.enumerate(0, 0))
-    except Exception as e:  # noqa: BLE001
-        log("hid", f"enumerate failed: {e}")
-        entries = []
-    log("hid", f"enumerate={len(entries)}")
+    emitted: dict[tuple, Device] = {}
 
     for entry in entries:
         vid = entry.get("vendor_id", 0)
@@ -563,28 +531,26 @@ def scan_gamepads(state: dict) -> list[Device]:
             family, name = "switch", NINTENDO_PRODUCTS[pid]
         elif vid == SONY and pid in SONY_PRODUCTS:
             family, name = "sony", SONY_PRODUCTS[pid]
-        elif vid == MICROSOFT and (pid in XBOX_PRODUCTS or (pid & 0xFF00) in (0x0200, 0x0B00)):
+        elif vid == MICROSOFT and pid in XBOX_PRODUCTS:
             family = "xbox"
-            name = XBOX_PRODUCTS.get(pid, name or "Xbox Wireless Controller")
-        elif vid == EIGHTBITDO and (pid in EIGHTBITDO_PRODUCTS or True):
+            name = XBOX_PRODUCTS[pid]
+        elif vid == EIGHTBITDO and pid in EIGHTBITDO_PRODUCTS:
             family = "8bitdo"
-            name = EIGHTBITDO_PRODUCTS.get(pid, name or "8BitDo Controller")
+            name = EIGHTBITDO_PRODUCTS[pid]
         elif vid == GAMESIR:
             family = "gamesir"
             name = GAMESIR_PRODUCTS.get(pid, name or "GameSir Controller")
-        elif vid in (FLYDIGI_V1, FLYDIGI_V2):
+        elif (vid == FLYDIGI_V1 and pid == 0x2412) or (vid == FLYDIGI_V2 and pid in FLYDIGI_PRODUCTS):
             family = "flydigi"
             name = FLYDIGI_PRODUCTS.get(pid, name or "Flydigi Controller")
-        elif vid == SHANWAN or (vid == SHANWAN_ALT and "betop" not in name_l):
+        elif vid in (SHANWAN, SHANWAN_ALT2):
             family = "shanwan"
-            raw = (entry.get("product_string") or name or "").strip()
-            # Prefer OEM strings that still carry Q34U / Q42 even in X-mode clones.
-            name = raw if raw else "ShanWan Controller"
-            if not any(h.lower() in name.lower() for h in ("q34", "q42", "q36", "shan", "山")):
-                name = f"ShanWan {name}".strip()
-        elif vid == BETOP:
-            family = "betop"
-            name = name or "BETOP Controller"
+            name = name.strip() or "ShanWan Controller"
+        elif vid in (SHANWAN_ALT, BETOP):
+            # Shared OEM VIDs (gcdb: Betop, Xiaomi, EasySMX, Sanwa, … on these) —
+            # trust the device's own product string, not the vendor id.
+            family = "oem"
+            name = name.strip() or "Gamepad"
         else:
             # Diagnostics: gamepad usage that we still don't claim.
             usage_page = int(entry.get("usage_page") or 0)
@@ -597,100 +563,81 @@ def scan_gamepads(state: dict) -> list[Device]:
         product = (entry.get("product_string") or name or "").strip() or name
         serial = entry.get("serial_number") or ""
         address = _bt_address(serial)
+        dev_key = f"hid:{vid:04x}:{pid:04x}:{serial or path.hex()[:12]}"
+        # Pads expose several HID collections; report each physical pad once.
+        group = (vid, pid, serial) if serial else (vid, pid, path)
+        prior = emitted.get(group)
+        if prior is not None and (prior.battery is not None or family not in _HID_READERS):
+            continue
         log("hid", f"match vid={vid:04x} pid={pid:04x} family={family} "
             f"product={product!r} serial={serial!r}")
 
         reading: tuple[int, bool] | None = None
-        try:
-            dev = hid.device()
-            dev.open_path(path)
-        except OSError as e:
-            log("hid", f"open failed {family}: {e}")
-            if family not in ("xbox",) or not any("xbox" in (d.name or "").lower() for d in result):
-                result.append(Device(
-                    address=f"hid:{vid:04x}:{pid:04x}:{serial or path.hex()[:12]}",
-                    name=product,
-                    kind=DeviceKind.GAMEPAD,
-                    connected=True,
-                    battery=None,
-                    transport="wireless",
-                    extra=_pad_extra("HID", product, name, address=address),
-                ))
-            continue
-        try:
-            if family == "switch":
-                counter = (counter + 1) & 0x0F
-                reading = _read_switch_battery(dev, counter)
-            elif family == "sony":
-                reading = _read_sony_battery(dev, pid)
-            elif family == "8bitdo":
-                reading = _read_8bitdo_battery(dev, pid)
-            elif family == "gamesir":
-                reading = _read_gamesir_battery(dev)
-            elif family == "flydigi":
-                reading = _read_flydigi_battery(dev, vid)
-            elif family == "shanwan":
-                reading = _read_shanwan_battery(dev)
-        except OSError as e:
-            log("hid", f"read failed {family}: {e}")
-            reading = None
-        finally:
+        if family in _HID_READERS:
             try:
-                dev.close()
-            except Exception:
-                pass
+                dev = hid.device()
+                dev.open_path(path)
+            except OSError as e:
+                log("hid", f"open failed {family}: {e}")
+                dev = None
+            if dev is not None:
+                try:
+                    if family == "switch":
+                        counter = (counter + 1) & 0x0F
+                        reading = _read_switch_battery(dev, counter)
+                    elif family == "sony":
+                        reading = _read_sony_battery(dev, pid)
+                    elif family == "8bitdo":
+                        reading = _read_8bitdo_battery(dev, pid)
+                    elif family == "flydigi":
+                        reading = _read_flydigi_battery(dev, vid, pid)
+                except OSError as e:
+                    log("hid", f"read failed {family}: {e}")
+                    reading = None
+                finally:
+                    try:
+                        dev.close()
+                    except Exception:
+                        pass
 
         level, charging = reading if reading else (None, None)
         log("hid", f"{family} battery={level} charging={charging}")
-        if family == "xbox":
-            for d in result:
-                if "xbox" in (d.name or "").lower() and d.battery is None and level is not None:
-                    d.battery = level
-                    d.charging = charging
-            # Still emit a stub so merge can flag X-mode spoof clones (山湾/小鸡/…).
-            if pid in XBOX_BT_ONLY_PIDS and not any(
-                "xbox" in (d.name or "").lower() for d in result
-            ):
-                extra = _pad_extra("HID", product, name, address=address)
-                extra["product"] = product
-                extra["xbox_bt_spoof"] = True
-                result.append(Device(
-                    address=f"hid:{vid:04x}:{pid:04x}:{serial or path.hex()[:12]}",
-                    name=product or "Xbox Wireless Controller",
-                    kind=DeviceKind.GAMEPAD,
-                    connected=True,
-                    battery=None,
-                    transport="wireless",
-                    extra=extra,
-                ))
-            elif pid in XBOX_BT_ONLY_PIDS:
-                for d in result:
-                    if "xbox" in (d.name or "").lower():
-                        d.extra = dict(d.extra or {})
-                        d.extra["xbox_bt_spoof"] = True
-                        if product:
-                            d.extra["product"] = product
+        if prior is not None:
+            if level is not None:
+                prior.battery, prior.charging = level, charging
             continue
+        if family == "xbox":
+            # Xbox HID has no battery field. Bluetooth-only PIDs are also what
+            # X-mode clones (ShanWan / GameSir / …) spoof — flag for the UI.
+            if pid not in XBOX_BT_ONLY_PIDS:
+                continue
+            existing = [d for d in result if "xbox" in (d.name or "").lower()]
+            for d in existing:
+                d.extra = dict(d.extra or {})
+                d.extra["xbox_bt_spoof"] = True
+                if product:
+                    d.extra["product"] = product
+            if existing:
+                continue
         hint_names = [product, name]
         if family == "shanwan":
-            hint_names.extend(SHANWAN_HINTS)
-            # Q34U2 often spoofs Xbox — keep both so the diagram picks 小肩键+背键.
-            if any(t in product.lower() for t in ("q34u2", "q34u 2", "二代")) or "q34u2" in name.lower():
-                hint_names.append("Q34U2")
-            elif "q34u" in product.lower() or "q34u" in name.lower():
-                hint_names.append("Q34U")
+            hint_names.append("ShanWan")
         extra = _pad_extra("HID", *hint_names, address=address)
         extra["product"] = product
-        result.append(Device(
-            address=f"hid:{vid:04x}:{pid:04x}:{serial or path.hex()[:12]}",
-            name=product,
+        if family == "xbox":
+            extra["xbox_bt_spoof"] = True
+        dev_out = Device(
+            address=dev_key,
+            name=product or name,
             kind=DeviceKind.GAMEPAD,
             connected=True,
             battery=level,
             transport="wireless",
             charging=charging,
             extra=extra,
-        ))
+        )
+        emitted[group] = dev_out
+        result.append(dev_out)
 
     state["counter"] = counter
     log("battery", "scan_done=" + ", ".join(f"{d.name}:{d.battery}" for d in result)[:500])

@@ -23,8 +23,6 @@ PRODUCTS = {
 }
 SUBCMD_GET_VOLTAGE = 0x50
 NEUTRAL_RUMBLE = bytes([0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40])
-# High nibble of byte 2: battery level (8 full, 6 medium, 4 low, 2 critical, 0 empty) | charging bit.
-_LEVEL_PERCENT = {8: 100, 6: 70, 4: 40, 2: 15, 0: 0}
 _HEX_MAC = re.compile(r"^[0-9a-fA-F]{12}$")
 
 
@@ -35,8 +33,9 @@ def _read_battery(dev: hid.device, counter: int, timeout: float = 0.6) -> tuple[
         data = dev.read(64, 100)
         if len(data) < 3 or data[0] not in (0x21, 0x30, 0x31):
             continue
-        nibble = data[2] >> 4
-        return _LEVEL_PERCENT.get(nibble & 0x0E, 0), bool(nibble & 0x01)
+        # SDL_hidapi_switch: level 0..8 in bits 5-7 (step 2), bit 4 = charging.
+        level = (data[2] & 0xE0) >> 4
+        return int(round(level / 8 * 100)), bool(data[2] & 0x10)
     return None
 
 

@@ -53,6 +53,7 @@ LABELS: dict[str, str] = {
     "BTN_EXTRA1": "M1 / Paddle 1", "BTN_EXTRA2": "M2 / Paddle 2",
     "BTN_EXTRA3": "M3 / Paddle 3", "BTN_EXTRA4": "M4 / Paddle 4",
     "BTN_EXTRA5": "L4 / 小肩左", "BTN_EXTRA6": "R4 / 小肩右",
+    "BTN_EXTRA7": "Extra 7", "BTN_EXTRA8": "Extra 8", "BTN_EXTRA9": "Extra 9",
     "JC_A": "A", "JC_B": "B", "JC_X": "X", "JC_Y": "Y",
     "JC_L": "L", "JC_R": "R", "JC_ZL": "ZL", "JC_ZR": "ZR",
     "JC_MINUS": "−", "JC_PLUS": "+", "JC_HOME": "Home", "JC_CAPTURE": "Capture",
@@ -167,6 +168,7 @@ _COMPACT: dict[str, str] = {
     "BTN_C": "C", "BTN_Z": "Z",
     "BTN_EXTRA1": "M1", "BTN_EXTRA2": "M2", "BTN_EXTRA3": "M3", "BTN_EXTRA4": "M4",
     "BTN_EXTRA5": "L4", "BTN_EXTRA6": "R4",
+    "BTN_EXTRA7": "E7", "BTN_EXTRA8": "E8", "BTN_EXTRA9": "E9",
 }
 
 
