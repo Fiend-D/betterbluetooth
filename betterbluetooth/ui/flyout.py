@@ -322,10 +322,21 @@ class Flyout(QWidget):
             QTimer.singleShot(0, self._maybe_hide)
         super().changeEvent(e)
 
+    def hold_auto_hide(self, seconds: float = 30.0) -> None:
+        """Keep the flyout open while a popup menu / dialog owns activation."""
+        self._suppress_hide_until = max(self._suppress_hide_until, time.monotonic() + seconds)
+
+    def release_auto_hide(self, grace: float = 0.6) -> None:
+        self._suppress_hide_until = time.monotonic() + grace
+
     def _maybe_hide(self) -> None:
         if self.pinned or self.isActiveWindow():
             return
         if time.monotonic() < self._suppress_hide_until:
+            return
+        # Device-card "…" menus are Qt popups; without this the Tool flyout hides
+        # on ActivationChange and the menu vanishes — worst for rows near the bottom.
+        if QApplication.activePopupWidget() is not None:
             return
         if QGuiApplication.mouseButtons() & Qt.LeftButton or time.monotonic() - self._last_user_move < 1.0:
             return

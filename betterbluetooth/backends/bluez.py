@@ -11,7 +11,10 @@ from dbus_fast.aio import MessageBus
 from dbus_fast.errors import DBusError
 from dbus_fast.service import ServiceInterface, method
 
-from ..models import AUDIO_KINDS, AdapterState, Device, kind_from_icon, normalize_address
+from ..models import (
+    AUDIO_KINDS, AdapterState, Device, DeviceKind, kind_from_appearance,
+    kind_from_icon, kind_from_name, normalize_address, resolve_kind,
+)
 from .base import Backend, BackendError
 
 BLUEZ = "org.bluez"
@@ -194,11 +197,23 @@ class BluezBackend(Backend):
     @staticmethod
     def _to_device(props: dict, ifaces: dict) -> Device:
         battery = ifaces.get(IFACE_BATTERY, {}).get("Percentage")
+        name = props.get("Alias") or props.get("Name") or props.get("Address", "")
+        appearance = props.get("Appearance")
+        try:
+            appearance_i = int(appearance) if appearance is not None else None
+        except (TypeError, ValueError):
+            appearance_i = None
+        kind = resolve_kind(
+            kind_from_icon(props.get("Icon")),
+            kind_from_appearance(appearance_i),
+            kind_from_name(name),
+            name=name,
+        )
         return Device(
             address=normalize_address(props.get("Address", "")),
-            name=props.get("Alias") or props.get("Name") or props.get("Address", ""),
+            name=name,
             system_name=props.get("Name", ""),
-            kind=kind_from_icon(props.get("Icon")),
+            kind=kind,
             paired=bool(props.get("Paired") or props.get("Bonded")),
             connected=bool(props.get("Connected")),
             battery=int(battery) if battery is not None else None,
@@ -230,14 +245,25 @@ class BluezBackend(Backend):
         return result
 
     def diagnostics(self, devices: list[Device]) -> list[str]:
-        missing = [d for d in devices if d.connected and d.battery is None and d.kind in AUDIO_KINDS]
-        if missing and not self._experimental_enabled():
-            names = "、".join(d.name for d in missing[:2])
+        missing_audio = [
+            d for d in devices
+            if d.connected and d.battery is None and d.kind in AUDIO_KINDS
+        ]
+        if missing_audio and not self._experimental_enabled():
+            names = "、".join(d.name for d in missing_audio[:2])
             return [
                 f"{names} 未上报电量。多数耳机需要开启 BlueZ 实验特性："
                 "在 /etc/bluetooth/main.conf 的 [General] 中设置 Experimental = true，"
                 "然后执行 sudo systemctl restart bluetooth。"
             ]
+        missing_other = [
+            d for d in devices
+            if d.connected and d.battery is None
+            and d.kind not in AUDIO_KINDS and d.kind != DeviceKind.GAMEPAD
+        ]
+        if missing_other and not missing_audio:
+            names = "、".join(d.name for d in missing_other[:2])
+            return [f"{names} 已连接但系统未提供电量（设备或驱动未通过 Battery1/UPower 上报）。"]
         return []
 
     def _experimental_enabled(self) -> bool:

@@ -6,3 +6,7 @@ dist/
 *.spec
 *.egg-info/
 release/
+
+debug-input.log
+hid-capture.log
+hid-capture.log.old

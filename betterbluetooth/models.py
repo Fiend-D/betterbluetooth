@@ -115,11 +115,44 @@ def kind_from_class(cod: int | None) -> DeviceKind:
     return DeviceKind.OTHER
 
 
+# Windows / BlueZ often append transport roles to the Bluetooth display name.
+_NAME_SUFFIX_RE = re.compile(
+    r"[\s\-_]*(?:hands[-\s]?free(?:\s*ag)?|stereo|headset|avrcp(?:\s*transport)?|"
+    r"le|ble|audio|ag|hf|hfp|a2dp)$",
+    re.IGNORECASE,
+)
+
+
+def strip_bt_name(name: str | None) -> str:
+    """Drop Hands-Free / Stereo / AVRCP / LE suffixes used by audio endpoints."""
+    text = (name or "").strip()
+    if not text:
+        return ""
+    prev = None
+    while prev != text:
+        prev = text
+        text = _NAME_SUFFIX_RE.sub("", text).strip(" -_")
+    return text or (name or "").strip()
+
+
 def kind_from_name(name: str | None) -> DeviceKind | None:
     """Guess kind from a Bluetooth display name when CoD / Appearance is missing."""
-    text = (name or "").lower()
+    raw = (name or "").strip()
+    text = raw.lower()
     if not text:
         return None
+    # Audio endpoints first — "As-J18 Hands-Free AG" must not fall through to OTHER
+    # and later get promoted to GAMEPAD by the PnP merge path.
+    if any(tok in text for tok in (
+        "headset", "headphone", "earphone", "earbuds", "earbud", "airpods", "buds",
+        "hands-free", "hands free", "wh-1000", "wf-1000", "sony wh", "sony wf",
+        "freebuds", "galaxy buds", "redmi buds", "soundcore", "life q", "momentum",
+        "beats ", "studio buds", "linkbuds", "clip buds", "openbuds", "neckband",
+        "耳机", "耳塞", "降噪",
+    )):
+        return DeviceKind.HEADSET if (
+            "headset" in text or "hands-free" in text or "hands free" in text
+        ) else DeviceKind.HEADPHONES
     if any(tok in text for tok in (
         "xbox", "dualsense", "dualshock", "joy-con", "joycon", "pro controller",
         "gamepad", "wireless controller", "switch pro", "8bitdo", "八位堂",
@@ -128,15 +161,19 @@ def kind_from_name(name: str | None) -> DeviceKind | None:
         "vader", "apex", "tarantula", "cyclone",
         "shanwan", "山湾", "山弯", "q34u", "q42", "easysmx", "易速马", "ipega",
         "gamepadspace", "machenike", "机械师", "启明星", "风行者", "九尾狐", "鲲鹏", "宙斯",
-        "阿修罗", "八爪鱼", "apex", "vader",
+        "阿修罗", "八爪鱼",
     )):
         return DeviceKind.GAMEPAD
-    if any(tok in text for tok in ("keyboard", "keychron", "mx keys", "magic keyboard")):
+    if any(tok in text for tok in ("keyboard", "keychron", "mx keys", "magic keyboard", "键盘")):
         return DeviceKind.KEYBOARD
-    if any(tok in text for tok in ("mouse", "mx master", "g pro", "deathadder")):
+    if any(tok in text for tok in ("mouse", "mx master", "g pro", "deathadder", "鼠标")):
         return DeviceKind.MOUSE
-    if any(tok in text for tok in ("headset", "airpods", "buds", "headphones", "wh-1000", "sony wh")):
-        return DeviceKind.HEADPHONES
+    if any(tok in text for tok in ("watch", "band ", "手环", "手表")):
+        return DeviceKind.WATCH
+    # Retry on the stripped base name ("Sony WH-1000XM5 Stereo" → headphones).
+    base = strip_bt_name(raw)
+    if base.lower() != text:
+        return kind_from_name(base)
     return None
 
 
@@ -168,3 +205,11 @@ def kind_from_appearance(app: int | None) -> DeviceKind:
 
 
 AUDIO_KINDS = {DeviceKind.HEADSET, DeviceKind.HEADPHONES, DeviceKind.SPEAKER}
+
+
+def resolve_kind(*candidates: DeviceKind | None, name: str | None = None) -> DeviceKind:
+    """First non-OTHER kind wins; fall back to name heuristics, then OTHER."""
+    for kind in candidates:
+        if kind and kind != DeviceKind.OTHER:
+            return kind
+    return kind_from_name(name) or DeviceKind.OTHER

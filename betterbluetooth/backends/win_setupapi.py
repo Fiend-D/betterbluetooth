@@ -160,23 +160,56 @@ def read_batteries() -> dict[str, int]:
 
 
 def read_batteries_detailed() -> tuple[dict[str, int], dict[str, int]]:
-    """Return (by_address, by_lowercase_name) battery maps.
-
-    Prefer levels found by walking up from HID/XINPUT (same path as Windows Settings
-    for Xbox BT). Plain BTHENUM nodes can be stale and only fill gaps.
-    """
+    """Return (by_address, by_lowercase_name) battery maps."""
     by_addr: dict[str, int] = {}
     by_name: dict[str, int] = {}
-    trusted: set[str] = set()  # addresses confirmed via HID ancestry
+    for node in read_battery_nodes():
+        level = int(node["level"])
+        addr = node.get("address")
+        name = (node.get("name") or "").strip()
+        if addr and (node.get("trusted") or addr not in by_addr):
+            by_addr[addr] = level
+        if name and name.lower() not in by_name:
+            by_name[name.lower()] = level
+    return by_addr, by_name
+
+
+def read_battery_nodes() -> list[dict]:
+    """Return [{address, name, level, trusted}, ...] from SetupAPI PnP.
+
+    Prefer levels found by walking up from HID/XINPUT (same path as Windows Settings
+    for Xbox BT). Plain BTHENUM / Hands-Free nodes only fill gaps.
+    """
+    records: list[dict] = []
+    by_addr: dict[str, int] = {}
+    trusted: set[str] = set()
     handle = _setupapi.SetupDiGetClassDevsW(None, None, None, DIGCF_PRESENT | DIGCF_ALLCLASSES)
     if handle in (None, INVALID_HANDLE_VALUE):
-        return by_addr, by_name
+        return records
+
+    def _add(addr: str | None, name: str | None, level: int, is_trusted: bool) -> None:
+        if not (0 <= level <= 100):
+            return
+        if addr and is_trusted:
+            by_addr[addr] = level
+            trusted.add(addr)
+        elif addr and addr not in trusted and addr not in by_addr:
+            by_addr[addr] = level
+        elif not addr and not name:
+            return
+        records.append({
+            "address": addr or "",
+            "name": (name or "").strip(),
+            "level": level,
+            "trusted": bool(addr and addr in trusted),
+        })
+
     try:
         index = 0
         data = SP_DEVINFO_DATA()
         data.cbSize = ctypes.sizeof(SP_DEVINFO_DATA)
         id_buf = ctypes.create_unicode_buffer(512)
-        nodes: list[tuple[str, int]] = []  # (instance_id, DevInst)
+        nodes: list[tuple[str, int]] = []
         while _setupapi.SetupDiEnumDeviceInfo(handle, index, ctypes.byref(data)):
             index += 1
             if not _setupapi.SetupDiGetDeviceInstanceIdW(handle, ctypes.byref(data), id_buf, 512, None):
@@ -192,11 +225,7 @@ def read_batteries_detailed() -> tuple[dict[str, int], dict[str, int]]:
             if level is None:
                 continue
             addr = _address_from_instance_id(parent_id) or _address_from_instance_id(instance_id)
-            if addr:
-                by_addr[addr] = level
-                trusted.add(addr)
-            if name:
-                by_name[name.lower()] = level
+            _add(addr, name, level, True)
 
         # Pass 2: BTHENUM / HFP — only fill addresses not already trusted.
         for instance_id, devinst in nodes:
@@ -204,18 +233,22 @@ def read_batteries_detailed() -> tuple[dict[str, int], dict[str, int]]:
             if not upper.startswith(_BT_PREFIX):
                 continue
             level = _read_byte_prop(devinst, DEVPKEY_BLUETOOTH_BATTERY)
-            if level is None or not (0 <= level <= 100):
+            if level is None:
                 continue
             addr = _address_from_instance_id(instance_id)
             name = (_read_string_prop(devinst, DEVPKEY_DEVICE_FRIENDLY)
                     or _read_string_prop(devinst, DEVPKEY_NAME))
-            if addr and addr not in trusted:
-                by_addr[addr] = level
-            if name and name.lower() not in by_name:
-                by_name[name.lower()] = level
+            if addr and addr in trusted:
+                # Still record the Hands-Free friendly name for matching.
+                if name:
+                    records.append({
+                        "address": addr, "name": name.strip(),
+                        "level": by_addr.get(addr, level), "trusted": True,
+                    })
+                continue
+            _add(addr, name, level, False)
 
-        # Pass 3: any remaining node that exposes the Bluetooth battery property
-        # (some Xbox BT stacks hang the value off SWD\ / container nodes).
+        # Pass 3: remaining nodes with the Bluetooth battery property.
         for instance_id, devinst in nodes:
             upper = instance_id.upper()
             if upper.startswith("HID\\") or "XINPUT" in upper or upper.startswith("USB\\"):
@@ -223,21 +256,35 @@ def read_batteries_detailed() -> tuple[dict[str, int], dict[str, int]]:
             if upper.startswith(_BT_PREFIX):
                 continue
             level = _read_byte_prop(devinst, DEVPKEY_BLUETOOTH_BATTERY)
-            if level is None or not (0 <= level <= 100):
+            if level is None:
                 continue
             addr = _address_from_instance_id(instance_id)
             name = (_read_string_prop(devinst, DEVPKEY_DEVICE_FRIENDLY)
                     or _read_string_prop(devinst, DEVPKEY_NAME))
-            if addr and addr not in trusted and addr not in by_addr:
-                by_addr[addr] = level
-            if name and name.lower() not in by_name:
-                by_name[name.lower()] = level
+            if addr and addr in trusted:
+                continue
+            _add(addr, name, level, False)
     finally:
         _setupapi.SetupDiDestroyDeviceInfoList(handle)
+
+    # Deduplicate: prefer trusted + named rows per address.
+    best: dict[str, dict] = {}
+    nameless: list[dict] = []
+    for rec in records:
+        addr = rec.get("address") or ""
+        if not addr:
+            if rec.get("name"):
+                nameless.append(rec)
+            continue
+        cur = best.get(addr)
+        if cur is None or (rec.get("trusted") and not cur.get("trusted")) \
+                or (rec.get("name") and not cur.get("name")):
+            best[addr] = rec
+    out = list(best.values()) + nameless
     try:
         from ..debuglog import log
-        sample = ", ".join(f"{a[-5:]}={v}%" for a, v in list(by_addr.items())[:8])
-        log("pnp", f"battery nodes={len(by_addr)} trusted={len(trusted)} names={len(by_name)} {sample}")
+        sample = ", ".join(f"{(r.get('address') or '')[-5:]}={r['level']}%" for r in out[:8])
+        log("pnp", f"battery nodes={len(best)} trusted={len(trusted)} names={len(out)} {sample}")
     except Exception:
         pass
-    return by_addr, by_name
+    return out

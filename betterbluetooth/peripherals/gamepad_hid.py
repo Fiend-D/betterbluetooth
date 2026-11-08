@@ -427,38 +427,51 @@ def _winrt_batteries(skip_microsoft: bool = False) -> list[Device]:
 
 
 def _pnp_as_devices() -> list[Device]:
-    """Expose SetupAPI battery readings as mergeable peripheral devices."""
+    """Expose SetupAPI battery readings as merge helpers (never standalone 2.4G rows).
+
+    Windows already applies these levels in the Bluetooth backend. We only re-emit
+    address-keyed shadows so merge can fill gaps. Name-only Hands-Free / Stereo
+    endpoints used to appear under「无线外设」as fake gamepads (seen with AS-J18).
+    """
     if sys.platform != "win32":
         return []
     try:
-        from ..backends.win_setupapi import read_batteries_detailed
-        by_addr, by_name = read_batteries_detailed()
+        from ..backends.win_setupapi import read_battery_nodes
+        from ..models import kind_from_name, strip_bt_name
+        nodes = read_battery_nodes()
     except Exception:
         return []
     out: list[Device] = []
-    for addr, level in by_addr.items():
+    seen: set[str] = set()
+    for node in nodes:
+        addr = node.get("address") or ""
+        if not addr or addr in seen:
+            continue
+        seen.add(addr)
+        level = int(node["level"])
+        raw_name = (node.get("name") or "").strip()
+        base = strip_bt_name(raw_name) or raw_name or "Bluetooth device"
+        kind = kind_from_name(raw_name) or kind_from_name(base) or DeviceKind.OTHER
+        names = [n for n in (base, raw_name) if n]
+        if kind == DeviceKind.GAMEPAD:
+            extra = _pad_extra("PnP", *names, address=addr)
+        else:
+            extra = {
+                "via": "PnP",
+                "battery_via": "PnP",
+                "bt_address": addr,
+                "bt_name": base,
+                "bt_names": names,
+                "pnp_shadow": True,  # merge must not append as 2.4G
+            }
         out.append(Device(
             address=f"pnp:{addr}",
-            name="Xbox Wireless Controller",
-            kind=DeviceKind.GAMEPAD,
+            name=base,
+            kind=kind,
             connected=True,
             battery=level,
             transport="wireless",
-            extra=_pad_extra("PnP", "Xbox Wireless Controller", "Wireless Controller",
-                             "Controller", address=addr),
-        ))
-    for name, level in by_name.items():
-        if any(d.extra.get("bt_address") for d in out):
-            # Prefer address-keyed; still add distinctive names for fuzzy merge.
-            pass
-        out.append(Device(
-            address=f"pnp-name:{name[:24]}",
-            name=name.title() if name.islower() else name,
-            kind=DeviceKind.GAMEPAD,
-            connected=True,
-            battery=level,
-            transport="wireless",
-            extra=_pad_extra("PnP", name, "Xbox Wireless Controller", "Wireless Controller"),
+            extra=extra,
         ))
     return out
 

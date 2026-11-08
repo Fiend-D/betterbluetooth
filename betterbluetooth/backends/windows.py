@@ -27,8 +27,8 @@ from winrt.windows.devices.radios import Radio, RadioState
 from winrt.windows.storage.streams import DataReader
 
 from ..models import (
-    Device, AdapterState, DeviceKind, kind_from_appearance, kind_from_class,
-    kind_from_name, normalize_address,
+    AUDIO_KINDS, Device, AdapterState, DeviceKind, kind_from_appearance,
+    kind_from_class, kind_from_name, normalize_address, resolve_kind, strip_bt_name,
 )
 from . import win_setupapi
 from .base import Backend, BackendError
@@ -120,6 +120,23 @@ def _create_watcher(aqs: str):
 def _address_from_id(device_id: str) -> str | None:
     found = _MAC_IN_ID.findall(device_id)
     return normalize_address(found[-1]) if found else None
+
+
+def _lookup_pnp_name(dev_name: str | None, by_name: dict[str, int]) -> int | None:
+    """Match a BT device to a PnP battery name, allowing Hands-Free/Stereo suffixes."""
+    if not dev_name or not by_name:
+        return None
+    low = dev_name.lower()
+    if low in by_name:
+        return by_name[low]
+    base = strip_bt_name(dev_name).lower()
+    if base and base in by_name:
+        return by_name[base]
+    for n, v in by_name.items():
+        nb = strip_bt_name(n).lower()
+        if base and nb and (base == nb or base in n or n in low or nb in low or base in nb):
+            return v
+    return None
 
 
 def _address_to_ulong(address: str) -> int:
@@ -265,9 +282,7 @@ class WindowsBackend(Backend):
                     continue
                 cod = getattr(getattr(dev, "class_of_device", None), "raw_value", None)
                 name = (dev.name or info.name or "蓝牙设备").strip() or "蓝牙设备"
-                kind = kind_from_class(cod)
-                if kind == DeviceKind.OTHER:
-                    kind = kind_from_name(name) or kind
+                kind = resolve_kind(kind_from_class(cod), kind_from_name(name), name=name)
                 merge(Device(
                     address=normalize_address(dev.bluetooth_address),
                     name=name,
@@ -292,9 +307,8 @@ class WindowsBackend(Backend):
                 le_objs[address] = dev
                 appearance = getattr(getattr(dev, "appearance", None), "raw_value", None)
                 name = (dev.name or info.name or "蓝牙设备").strip() or "蓝牙设备"
-                kind = kind_from_appearance(appearance)
-                if kind == DeviceKind.OTHER:
-                    kind = kind_from_name(name) or kind
+                kind = resolve_kind(
+                    kind_from_appearance(appearance), kind_from_name(name), name=name)
                 merge(Device(
                     address=address,
                     name=name,
@@ -315,15 +329,8 @@ class WindowsBackend(Backend):
             if not dev.connected:
                 continue
             level = levels.get(address)
-            if level is None and (dev.name or "").lower() in by_name:
-                level = by_name[dev.name.lower()]
             if level is None:
-                # Fuzzy name match (Windows may append "Audio" / "LE" suffixes).
-                low = (dev.name or "").lower()
-                for n, v in by_name.items():
-                    if low and (low in n or n in low):
-                        level = v
-                        break
+                level = _lookup_pnp_name(dev.name, by_name)
             if level is not None:
                 dev.battery = level
                 dev.extra = dict(dev.extra or {})
@@ -336,6 +343,24 @@ class WindowsBackend(Backend):
                     dev.extra = dict(dev.extra or {})
                     dev.extra["battery_via"] = "GATT"
         return list(merged.values())
+
+    def diagnostics(self, devices: list[Device]) -> list[str]:
+        missing = [d for d in devices if d.connected and d.battery is None]
+        if not missing:
+            return []
+        audio = [d for d in missing if d.kind in AUDIO_KINDS]
+        other = [d for d in missing if d.kind not in AUDIO_KINDS and d.kind != DeviceKind.GAMEPAD]
+        hints = []
+        if audio:
+            names = "、".join(d.name for d in audio[:2])
+            hints.append(
+                f"{names} 已连接但未读到电量。经典蓝牙耳机通常靠 Hands-Free 节点上报；"
+                "可在系统蓝牙设置中确认是否显示电量。"
+            )
+        elif other:
+            names = "、".join(d.name for d in other[:2])
+            hints.append(f"{names} 已连接但系统未提供电量（PnP / GATT 均无）。")
+        return hints
 
     async def _gatt_battery(self, address: str, dev: BluetoothLEDevice) -> int | None:
         now = time.monotonic()

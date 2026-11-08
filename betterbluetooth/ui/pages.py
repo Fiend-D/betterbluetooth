@@ -4,7 +4,7 @@ import time
 from typing import TYPE_CHECKING, Callable
 
 from PySide6.QtCore import QEvent, QObject, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLineEdit, QScrollArea, QSizePolicy, QSpinBox,
     QStackedWidget, QToolButton, QVBoxLayout, QWidget,
@@ -169,6 +169,8 @@ class DeviceCard(QFrame):
                 )) or bool((dev.extra or {}).get("xbox_bt_spoof"))
                 text = ("已连接 · 电量不可读（X档伪装常见）" if spoofish
                         else "已连接 · 电量不可读")
+            elif dev.kind.value in ("headset", "headphones", "speaker"):
+                text = "已连接 · 电量不可读"
             else:
                 text = "已连接"
             if dev.charging:
@@ -216,7 +218,12 @@ class DeviceCard(QFrame):
         dev = self.device
         if not dev:
             return
+        flyout = getattr(self.ctl, "flyout", None)
+        if flyout is not None:
+            flyout.hold_auto_hide(60.0)
         menu = make_menu(self)
+        if flyout is not None:
+            menu.aboutToHide.connect(flyout.release_auto_hide)
         if dev.is_bluetooth and "connect" in self.ctl.capabilities and not self.ctl.pending.get(self.address):
             menu.addAction("断开连接" if dev.connected else "连接", self._primary)
         menu.addAction("重命名", self.start_rename)
@@ -232,7 +239,19 @@ class DeviceCard(QFrame):
         if dev.is_bluetooth and "remove" in self.ctl.capabilities:
             menu.addSeparator()
             menu.addAction("删除设备", self._confirm_remove)
-        menu.exec(self.more_btn.mapToGlobal(self.more_btn.rect().bottomLeft()))
+        # Open upward when the card sits near the bottom of the flyout so the
+        # menu isn't clipped under the taskbar / outside the panel.
+        origin = self.more_btn.mapToGlobal(self.more_btn.rect().bottomLeft())
+        hint = menu.sizeHint()
+        screen = QGuiApplication.screenAt(origin) or QGuiApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            if origin.y() + hint.height() > avail.bottom():
+                origin = self.more_btn.mapToGlobal(self.more_btn.rect().topLeft())
+                origin.setY(origin.y() - hint.height())
+            origin.setX(min(origin.x(), avail.right() - hint.width()))
+            origin.setX(max(origin.x(), avail.left()))
+        menu.exec(origin)
 
     def _confirm_remove(self) -> None:
         if self.device:

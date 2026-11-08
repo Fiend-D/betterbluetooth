@@ -6,7 +6,7 @@ import os
 import sys
 from typing import Callable
 
-from ..models import Device, DeviceKind
+from ..models import AUDIO_KINDS, Device, DeviceKind, kind_from_name, strip_bt_name
 
 
 class PeripheralSource(abc.ABC):
@@ -108,6 +108,28 @@ def _apply_battery(dst: Device, src: Device) -> bool:
     return True
 
 
+def _match_by_stripped_name(connected_bt: list[Device], candidates: list[str]) -> Device | None:
+    """Match Hands-Free / Stereo endpoint names onto the parent Bluetooth device."""
+    bases = {strip_bt_name(n).lower() for n in candidates if n}
+    bases.update(n.lower() for n in candidates if n)
+    bases.discard("")
+    if not bases:
+        return None
+    hits = [
+        d for d in connected_bt
+        if (d.name or "").lower() in bases
+        or strip_bt_name(d.name).lower() in bases
+        or any(
+            strip_bt_name(d.name).lower() == strip_bt_name(n).lower()
+            for n in candidates if n
+        )
+    ]
+    if len(hits) == 1:
+        return hits[0]
+    needy = [d for d in hits if d.battery is None]
+    return needy[0] if len(needy) == 1 else None
+
+
 def merge(bluetooth: list[Device], peripherals: list[Device]) -> list[Device]:
     """Attach peripheral readings to matching Bluetooth devices; append the rest."""
     by_addr = {d.address: d for d in bluetooth}
@@ -115,6 +137,9 @@ def merge(bluetooth: list[Device], peripherals: list[Device]) -> list[Device]:
     by_name: dict[str, list[Device]] = {}
     for d in connected_bt:
         by_name.setdefault(d.name, []).append(d)
+        base = strip_bt_name(d.name)
+        if base and base != d.name:
+            by_name.setdefault(base, []).append(d)
     result = list(bluetooth)
     seen: set[str] = set()
 
@@ -122,11 +147,12 @@ def merge(bluetooth: list[Device], peripherals: list[Device]) -> list[Device]:
     peripherals = sorted(peripherals, key=_battery_rank, reverse=True)
 
     for p in peripherals:
-        bt = by_addr.get(p.extra.get("bt_address", ""))
+        extra = p.extra or {}
+        bt = by_addr.get(extra.get("bt_address", ""))
         candidates: list[str] = []
-        if p.extra.get("bt_name"):
-            candidates.append(p.extra["bt_name"])
-        candidates.extend(p.extra.get("bt_names") or [])
+        if extra.get("bt_name"):
+            candidates.append(extra["bt_name"])
+        candidates.extend(extra.get("bt_names") or [])
         candidates.append(p.name)
 
         if bt is None:
@@ -135,12 +161,16 @@ def merge(bluetooth: list[Device], peripherals: list[Device]) -> list[Device]:
                 if len(same) == 1:
                     bt = same[0]
                     break
+        if bt is None:
+            bt = _match_by_stripped_name(connected_bt, candidates)
 
         if bt is None and p.kind == DeviceKind.GAMEPAD:
             # Match by name even when Windows mis-classified the BT device as OTHER.
+            # Never fuzzy-attach a gamepad reading onto headphones / speakers.
             fuzzy = [
                 d for d in connected_bt
-                if any(_names_match(d.name, n) for n in candidates)
+                if d.kind not in AUDIO_KINDS
+                and any(_names_match(d.name, n) for n in candidates)
                 and (d.kind == DeviceKind.GAMEPAD or d.kind == DeviceKind.OTHER
                      or "controller" in (d.name or "").lower()
                      or "xbox" in (d.name or "").lower()
@@ -163,31 +193,73 @@ def merge(bluetooth: list[Device], peripherals: list[Device]) -> list[Device]:
                 elif len(needy) == 1:
                     bt = needy[0]
             elif len(connected_bt) == 1 and connected_bt[0].battery is None:
-                # Sole connected BT device + a gamepad battery reading → attach.
                 sole = connected_bt[0]
-                if sole.kind in (DeviceKind.GAMEPAD, DeviceKind.OTHER) or _names_match(sole.name, p.name):
+                if sole.kind in AUDIO_KINDS:
+                    pass
+                elif sole.kind in (DeviceKind.GAMEPAD, DeviceKind.OTHER) or _names_match(sole.name, p.name):
                     bt = sole
 
         if bt is not None:
             if bt.connected:
                 _apply_battery(bt, p)
+                # Only classify when the BT side is still OTHER. Prefer the
+                # device / endpoint name (Hands-Free → headset) over a PnP
+                # shadow that was historically hard-coded as GAMEPAD.
                 if bt.kind == DeviceKind.OTHER:
-                    bt.kind = DeviceKind.GAMEPAD
-                # Keep HID / OEM names so X-mode pads (ShanWan→Xbox) still match layouts.
-                bt.extra = dict(bt.extra or {})
-                hints = list(bt.extra.get("model_hints") or [])
-                for n in [p.name, p.extra.get("bt_name"), *(p.extra.get("bt_names") or [])]:
-                    if n and n not in hints:
-                        hints.append(str(n))
-                if hints:
-                    bt.extra["model_hints"] = hints[:12]
-                if p.extra.get("product") and not bt.extra.get("product"):
-                    bt.extra["product"] = p.extra["product"]
-                if p.extra.get("xbox_bt_spoof"):
-                    bt.extra["xbox_bt_spoof"] = True
+                    inferred = kind_from_name(bt.name)
+                    pnpish = (
+                        extra.get("via") == "PnP"
+                        or extra.get("battery_via") == "PnP"
+                        or extra.get("pnp_shadow")
+                    )
+                    if not inferred:
+                        for n in candidates:
+                            guess = kind_from_name(n)
+                            if not guess:
+                                continue
+                            # Legacy PnP shadows labeled every address "Xbox Wireless
+                            # Controller"; never let that reclassify headphones.
+                            if pnpish and guess == DeviceKind.GAMEPAD:
+                                low = (n or "").lower()
+                                if low in (
+                                    "xbox wireless controller", "xbox controller",
+                                    "wireless controller", "controller",
+                                ):
+                                    continue
+                            inferred = guess
+                            break
+                    if inferred:
+                        bt.kind = inferred
+                    elif p.kind != DeviceKind.OTHER and not (
+                        pnpish and p.kind == DeviceKind.GAMEPAD
+                    ):
+                        bt.kind = p.kind
+                if p.kind == DeviceKind.GAMEPAD:
+                    bt.extra = dict(bt.extra or {})
+                    hints = list(bt.extra.get("model_hints") or [])
+                    for n in [p.name, extra.get("bt_name"), *(extra.get("bt_names") or [])]:
+                        if n and n not in hints:
+                            hints.append(str(n))
+                    if hints:
+                        bt.extra["model_hints"] = hints[:12]
+                    if extra.get("product") and not bt.extra.get("product"):
+                        bt.extra["product"] = extra["product"]
+                    if extra.get("xbox_bt_spoof"):
+                        bt.extra["xbox_bt_spoof"] = True
             continue
 
-        # Unmatched peripheral: still show it (with battery) instead of dropping.
+        # PnP shadows / Hands-Free endpoints of already-listed BT devices must not
+        # show up under「无线外设（2.4G）」— that was the AS-J18 duplicate.
+        if extra.get("pnp_shadow") or extra.get("via") == "PnP" or extra.get("battery_via") == "PnP":
+            if extra.get("bt_address") in by_addr:
+                continue
+            if p.kind in AUDIO_KINDS:
+                continue
+            if any(tok in (p.name or "").lower() for tok in (
+                "hands-free", "hands free", "stereo", "avrcp", "headset",
+            )):
+                continue
+
         if p.address in seen:
             continue
         seen.add(p.address)
